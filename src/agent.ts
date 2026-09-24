@@ -43,6 +43,14 @@ export class Agent {
   contextTokens = 0;
   constructor(private opts: AgentOptions) {}
 
+  get provider() {
+    return this.opts.provider;
+  }
+  // /model swaps it between turns. Same provider family only, since the history holds its raw items.
+  set provider(p: Provider) {
+    this.opts.provider = p;
+  }
+
   get contextWindow() {
     return this.opts.contextWindow ?? this.opts.provider.contextWindow;
   }

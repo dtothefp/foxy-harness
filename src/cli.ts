@@ -84,7 +84,8 @@ if (args[0] === "login") {
   process.exit(0);
 }
 if (args[0] === "models") {
-  console.log(JSON.stringify(await listModels(), null, 2));
+  const { models } = (await listModels()) as { models: { slug: string; description?: string; visibility?: string }[] };
+  for (const m of models.filter((m) => m.visibility !== "hide")) console.log(`${m.slug.padEnd(24)} ${dim(m.description ?? "")}`);
   process.exit(0);
 }
 
@@ -93,12 +94,12 @@ const sessionId = crypto.randomUUID();
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const hooks = new Hooks();
 
-function makeProvider(): Provider {
-  if (providerName === "codex") return codexProvider(modelArg ?? "gpt-5.5", sessionId);
+function makeProvider(model = modelArg): Provider {
+  if (providerName === "codex") return codexProvider(model ?? "gpt-5.5", sessionId);
   if (providerName !== "bedrock" && providerName !== "anthropic") {
     throw new Error(`Unknown provider "${providerName}". Use codex, bedrock or anthropic.`);
   }
-  const name = modelArg ?? config.get("ANTHROPIC_MODEL") ?? config.model ?? "sonnet";
+  const name = model ?? config.get("ANTHROPIC_MODEL") ?? config.model ?? "sonnet";
   return claudeProvider(providerName, resolveClaudeModel(name, providerName, config), config);
 }
 
@@ -237,7 +238,11 @@ async function turn(prompt: string) {
   const onSigint = () => controller.abort();
   process.once("SIGINT", onSigint);
   try {
-    if (prompt === "/compact") {
+    if (prompt === "/model" || prompt.startsWith("/model ")) {
+      const name = prompt.slice("/model".length).trim();
+      if (name) agent.provider = makeProvider(name);
+      console.log(dim(`⏺ ${name ? "Switched to" : "Using"} ${agent.provider.model} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`));
+    } else if (prompt === "/compact") {
       if (!(await agent.compact("manual", controller.signal))) console.log(dim("Nothing to compact."));
     } else await agent.run(prompt, controller.signal);
   } catch (err) {
@@ -254,7 +259,7 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/model switches models, /compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);

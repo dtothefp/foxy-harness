@@ -24,6 +24,8 @@ bun src/cli.ts --model sonnet         # opus, sonnet, haiku, or any claude-* id
 bun src/cli.ts --provider bedrock     # codex | bedrock | anthropic
 ```
 
+`/model <name>` switches models mid-session within the same provider (`/model gpt-5.4`, `/model opus`). `/model` alone shows the current one. `fox-harness models` lists what your ChatGPT plan can use.
+
 `bun link` once puts a `fox-harness` command on your PATH, so you can run it from any repo.
 
 The agent narrates in short lines. A dim `✻` heading for each reasoning step (Codex models), one line before each batch of tool calls, and a final answer of about five lines. Bash calls show a plain-language description the model writes (`⏺ Check the current git branch`), not the command. The command and its output only show when it fails or asks permission. Other tool output is trimmed to a glimpse (the model still gets all of it).
