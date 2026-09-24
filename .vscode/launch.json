@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // One-shot run, no stdin needed. --yolo skips the y/n prompt (the debug console can't answer it).
+      "name": "Debug: one-shot prompt",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "${input:prompt}"],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Interactive REPL. First run `bun run debug` in the terminal, then start this.
+      "name": "Debug: attach to REPL (bun run debug)",
+      "type": "bun",
+      "request": "attach",
+      "url": "ws://localhost:6499/fox-harness"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "prompt",
+      "type": "promptString",
+      "description": "Prompt for the agent",
+      "default": "list the files in src and tell me what each one does in one line"
+    }
+  ]
+}

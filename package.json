@@ -11,7 +11,8 @@
     "login": "bun src/cli.ts login",
     "models": "bun src/cli.ts models",
     "typecheck": "tsc --noEmit",
-    "build": "bun build src/cli.ts --compile --outfile dist/harness"
+    "build": "bun build src/cli.ts --compile --outfile dist/harness",
+    "debug": "bun --inspect-wait=localhost:6499/fox-harness src/cli.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
