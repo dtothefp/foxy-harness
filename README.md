@@ -69,7 +69,7 @@ Instructions work at two levels, monorepo style. Nothing walks up to the git roo
 - **Global.** `~/.foxy-harness/AGENTS.md`, `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md` (first found). Used only when there's no local file.
 - **Package.** The first time a tool reads or edits a file under a subdirectory with its own `AGENTS.md`/`CLAUDE.md`, that file is added to the tool result. It stacks with the root file. The nearest one wins, and each loads once per session.
 
-Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the launch directory and in your home directory. A local skill beats a global one with the same name. Only each skill's name, description and path go in the system prompt. The model reads `SKILL.md` with `read_file` when a task matches. Skills with `disable-model-invocation: true` are skipped.
+Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the launch directory and in your home directory. A local skill beats a global one with the same name. Only each skill's name, description and path go in the system prompt. The model reads `SKILL.md` with `read_file` when a task matches. Skills with `disable-model-invocation: true` are skipped. Package skills load like package instructions. The first time a tool touches a file under `packages/foo/`, skills in `packages/foo/.claude/skills` (and `.agents`, `.codex`) are added to the tool result. Nested packages stack, and a package skill can shadow a root skill with the same name.
 
 ## How it works
 

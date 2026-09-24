@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
-import type { Instructions, Skill } from "./context.ts";
+import { formatSkills, type Instructions, type Skill } from "./context.ts";
 import type { Hooks } from "./events.ts";
 import type { Message, Provider, ToolSpec } from "./providers/types.ts";
 import { applyChanges } from "./tools/changes.ts";
@@ -142,7 +142,7 @@ Communication:
   if (skills.length) {
     prompt += `\n\n# Skills
 When a task matches a skill, read its SKILL.md with read_file first and follow it. Paths inside a skill are relative to its folder.
-${skills.map((s) => `- ${s.name}: ${s.description} (${s.path})`).join("\n")}`;
+${formatSkills(skills)}`;
   }
   if (instructions) prompt += `\n\n# Instructions (${instructions.path})\n${instructions.text}`;
   return prompt;
