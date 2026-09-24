@@ -9,15 +9,17 @@ export type HarnessEvent =
   | { type: "UserPromptSubmit"; prompt: string }
   // `changes` is set for edit tools: the planned file writes, so a hook can show the diff before approving.
   | { type: "PreToolUse"; tool: string; input: unknown; callId: string; changes?: FileChange[] }
-  | { type: "PostToolUse"; tool: string; input: unknown; output: string; ok: boolean }
+  | { type: "PostToolUse"; tool: string; input: unknown; output: string; ok: boolean; changes?: FileChange[] }
   | { type: "Stop"; reason: "end_turn" | "max_steps" | "interrupted" | "error"; error?: string }
   | { type: "SessionEnd"; sessionId: string };
 
 export type EventType = HarnessEvent["type"];
 type EventOf<T extends EventType> = Extract<HarnessEvent, { type: T }>;
 
-// A handler may block the action (only meaningful for UserPromptSubmit and PreToolUse).
-export type HookResult = void | { block: string };
+// A handler may block the action (UserPromptSubmit, PreToolUse), or add context the model sees
+// after the prompt or tool result (UserPromptSubmit, PostToolUse), like Claude Code's additionalContext.
+export type HookResult = void | { block: string } | { context: string };
+export type HookOutcome = { block?: string; context?: string };
 type Handler<T extends EventType> = (event: EventOf<T>) => HookResult | Promise<HookResult>;
 
 export class Hooks {
@@ -29,11 +31,14 @@ export class Hooks {
     this.handlers.set(type, list);
   }
 
-  // Runs handlers in order. The first { block } wins and is returned.
-  async emit<T extends EventType>(event: EventOf<T>): Promise<{ block: string } | undefined> {
+  // Runs handlers in order. The first { block } wins. Context from every handler is joined.
+  async emit<T extends EventType>(event: EventOf<T>): Promise<HookOutcome> {
+    const context: string[] = [];
     for (const handler of this.handlers.get(event.type) ?? []) {
       const result = await handler(event);
-      if (result && "block" in result) return result;
+      if (result && "block" in result) return { block: result.block };
+      if (result && "context" in result) context.push(result.context);
     }
+    return context.length ? { context: context.join("\n\n") } : {};
   }
 }

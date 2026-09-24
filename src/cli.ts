@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
+import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { Agent, buildSystemPrompt } from "./agent.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
+import { loadInstructions, loadSkills, watchPackageInstructions } from "./context.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider } from "./providers/types.ts";
@@ -72,6 +74,8 @@ try {
   process.exit(1);
 }
 const tools = toolsFor(provider.name);
+const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
+watchPackageInstructions(hooks, cwd, instructions, (path) => console.log(dim(`⏺ Loaded ${path}`)));
 
 async function ask(question: string) {
   const answer = (await rl.question(dim(`${question} [Y/n/reason] `))).trim();
@@ -99,7 +103,7 @@ const agent = new Agent({
   hooks,
   cwd,
   sessionId,
-  system: await buildSystemPrompt(cwd, tools),
+  system: buildSystemPrompt(cwd, tools, instructions, skills),
   // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
   fakeTools: demoUnknownTool
     ? [
@@ -157,7 +161,9 @@ const oneShot = args.join(" ").trim();
 if (oneShot) {
   await turn(oneShot);
 } else {
-  console.log(dim(`fox-harness · ${provider.name} · ${provider.model} · ${cwd}\nctrl+c interrupts a turn, ctrl+d exits`));
+  const home = (p: string) => p.replace(homedir(), "~");
+  const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
+  console.log(dim(`fox-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\nctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);
