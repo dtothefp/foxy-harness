@@ -75,7 +75,7 @@ export class Agent {
         const started = performance.now();
         const res = await provider.complete({ ...this.request(signal), onText: this.opts.onText, onReasoning: this.opts.onReasoning });
         this.opts.onStep?.({ ms: performance.now() - started, firstTokenMs: res.firstTokenMs, usage: res.usage });
-        this.messages.push({ role: "assistant", text: res.text, toolCalls: res.toolCalls, raw: res.raw });
+        this.messages.push({ role: "assistant", text: res.text, toolCalls: res.toolCalls, raw: res.raw, usage: res.usage });
         if (res.usage.inputTokens != null) this.contextTokens = res.usage.inputTokens + (res.usage.outputTokens ?? 0);
 
         if (res.toolCalls.length === 0) {
@@ -198,12 +198,18 @@ export class Agent {
     return post.context ? { output: `${r.output}\n\n${post.context}`, context: post.context } : { output: r.output };
   }
 
+  // What's saved to the session file, and what /session summarizes.
+  snapshot() {
+    const { provider, cwd } = this.opts;
+    return { provider: provider.name, model: provider.model, settings: provider.settings, cwd, messages: this.messages };
+  }
+
   private async save() {
     const dir = join(HARNESS_HOME, "sessions");
     await mkdir(dir, { recursive: true });
     await Bun.write(
       join(dir, `${this.opts.sessionId}.json`),
-      JSON.stringify({ model: this.opts.provider.model, cwd: this.opts.cwd, messages: this.messages }, null, 2),
+      JSON.stringify(this.snapshot(), null, 2),
     );
   }
 }

@@ -28,9 +28,13 @@ bun src/cli.ts --provider bedrock     # codex | bedrock | anthropic
 
 `bun link` once puts a `fox-harness` command on your PATH, so you can run it from any repo.
 
-The agent narrates in short lines. A dim `✻` heading for each reasoning step (Codex models), one line before each batch of tool calls, and a final answer of about five lines. Bash calls show a plain-language description the model writes (`⏺ Check the current git branch`), not the command. The command and its output only show when it fails or asks permission. Other tool output is trimmed to a glimpse (the model still gets all of it).
+The agent narrates in short lines. A dim `✻` heading for each reasoning step, one line before each batch of tool calls, and a final answer of about five lines. Bash calls show a plain-language description the model writes (`⏺ Check the current git branch`), not the command. The command and its output only show when it fails or asks permission. Other tool output is trimmed to a glimpse (the model still gets all of it).
 
 Replies render as Markdown on a terminal (headings, bold, code, lists, quotes, links, aligned tables). Text streams line by line. Piped output stays raw.
+
+Claude requests ask for adaptive thinking with summaries (`display: "summarized"`), so the `✻` lines show for Claude too. Newer Claude models think by default but hide it. Models older than 4.6 reject adaptive thinking, and the harness retries once without it. The step footer shows thinking tokens as `out 56 (thinking 40)` when the backend reports them.
+
+`fox-harness last` prints a short summary of the newest session. Provider, model, effort and thinking settings, then per step what came back (thinking shown or hidden, text length, tool calls) and token counts. `fox-harness last <id-prefix>` picks a session. `/session` in the REPL prints the same for the current one. Inference profile ARNs are shortened so the account id doesn't show.
 
 Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. End a line with `\` to type a newline.
 
@@ -49,6 +53,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 | `HARNESS_PROVIDER` | `codex`, `bedrock` or `anthropic`. Same as `--provider`. |
 | `HARNESS_MODEL` | Same as `--model`. |
 | `HARNESS_YOLO=1` | Skip permission prompts. Same as `--yolo`. |
+| `HARNESS_EFFORT` | Reasoning effort. Claude takes `low`, `medium`, `high`, `xhigh`, `max` (unset is the API default, high). Codex takes `minimal` through `xhigh` (default `medium`). |
 | `HARNESS_CONTEXT_WINDOW` | Context window in tokens. Default 272000 (Codex), 200000 (Claude). Compaction thresholds scale with it. |
 | `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
 | `ANTHROPIC_MODEL` | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`. |

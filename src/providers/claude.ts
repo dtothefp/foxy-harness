@@ -1,7 +1,7 @@
 import type { Config } from "../config.ts";
 import { eventStreamEvents } from "./eventstream.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Message, type Provider, SUMMARY_PREFIX } from "./types.ts";
+import { type Completion, type CompletionRequest, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
 
 // Claude over two transports that share one request and event shape:
 //   anthropic  the Messages API (API key or auth token)
@@ -16,6 +16,9 @@ const RETRIES = 3;
 const CONTEXT_WINDOW = 200_000;
 // Server-side compaction on demand. The Claude API has it, Bedrock doesn't, so Bedrock uses our own summary.
 const COMPACT_BETA = "compact-2026-09-04";
+// Adaptive thinking with summaries on. Newer models think by default but hide it ("omitted"), so nothing
+// shows while they think. Models before 4.6 reject adaptive, and the request is retried without it.
+const THINKING = { type: "adaptive", display: "summarized" };
 
 // Fallback ids for the direct API. Bedrock needs ANTHROPIC_DEFAULT_<ALIAS>_MODEL, since ids and ARNs are per account.
 const ALIASES: Record<string, string> = {
@@ -39,17 +42,34 @@ export function resolveClaudeModel(name: string, transport: ClaudeTransport, con
 
 export function claudeProvider(transport: ClaudeTransport, model: string, config: Config): Provider {
   const endpoint = transport === "bedrock" ? bedrockEndpoint(model, config) : anthropicEndpoint(model, config);
+  // HARNESS_EFFORT is low, medium, high, xhigh or max. Unset leaves the API default (high).
+  const effort = config.get("HARNESS_EFFORT");
+  const settings = { effort: effort ?? "default (high)", thinking: "adaptive, summarized" };
+  let thinking = true;
+
   async function send(req: CompletionRequest, extra: Record<string, unknown> = {}): Promise<Completion> {
-    const body = JSON.stringify({ ...endpoint.body, ...requestBody(req), ...extra });
     // Every request that carries a compaction block needs the beta header, not just the one that made it.
     const beta = extra.compaction || req.messages.some(isNativeSummary);
     const headers = beta ? withBeta(endpoint.headers, COMPACT_BETA) : endpoint.headers;
     for (let attempt = 0; ; attempt++) {
+      const body = JSON.stringify({
+        ...endpoint.body,
+        ...requestBody(req),
+        ...(thinking ? { thinking: THINKING } : {}),
+        ...(effort ? { output_config: { effort } } : {}),
+        ...extra,
+      });
       const res = await fetch(endpoint.url, { method: "POST", signal: req.signal, headers, body });
       if (res.ok) {
         // Bedrock streams AWS event frames. The direct API and some gateways stream SSE.
         const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
-        return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req.onText);
+        return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req.onText, req.onReasoning);
+      }
+      const text = await res.text();
+      if (thinking && res.status === 400 && /thinking|adaptive|display/i.test(text)) {
+        thinking = false;
+        settings.thinking = "model default (adaptive rejected)";
+        continue;
       }
       // 429 rate limited, 529 overloaded, other 5xx: back off and retry.
       if (attempt < RETRIES && (res.status === 429 || res.status >= 500)) {
@@ -57,7 +77,7 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
         await Bun.sleep(Math.min(wait, 20_000));
         continue;
       }
-      throw new Error(`${transport} ${res.status}: ${await res.text()}`);
+      throw new Error(`${transport} ${res.status}: ${text}`);
     }
   }
 
@@ -65,6 +85,7 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
     name: transport,
     model,
     contextWindow: CONTEXT_WINDOW,
+    settings,
     complete: (req) => send(req),
     // The response is a single signed compaction block, which goes first in messages from then on.
     compact:
@@ -181,7 +202,11 @@ function toMessages(messages: Message[]) {
   return out;
 }
 
-async function readStream(events: AsyncIterable<any>, onText?: (d: string) => void): Promise<Completion> {
+async function readStream(
+  events: AsyncIterable<any>,
+  onText?: (d: string) => void,
+  onReasoning?: (s: string) => void,
+): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
   const blocks: Block[] = [];
@@ -223,10 +248,16 @@ async function readStream(events: AsyncIterable<any>, onText?: (d: string) => vo
           b.input = parseJson(json[ev.index] ?? "");
           out.toolCalls.push({ id: b.id, name: b.name, input: b.input });
         }
+        // Summarized thinking arrives whole before the block stops. Hidden ("omitted") thinking is empty.
+        if (b.type === "thinking") {
+          const line = reasoningHeading(b.thinking ?? "");
+          if (line) onReasoning?.(line);
+        }
         break;
       }
       case "message_delta":
         if (ev.usage?.output_tokens != null) out.usage.outputTokens = ev.usage.output_tokens;
+        if (ev.usage?.output_tokens_details?.thinking_tokens != null) out.usage.thinkingTokens = ev.usage.output_tokens_details.thinking_tokens;
         break;
       case "error":
         throw new Error(`claude stream error: ${JSON.stringify(ev.error)}`);
