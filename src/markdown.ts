@@ -24,7 +24,8 @@ export function markdownStream(write: (s: string) => void) {
   function line(raw: string) {
     const open = raw.match(/^\s*(`{3,}|~{3,})\s*(\S*)/);
     if (fence) {
-      if (open && open[1]!.startsWith(fence)) fence = undefined;
+      // Only a bare fence at least as long closes, so a ```bash line inside a ```markdown block stays code.
+      if (open && !open[2] && open[1]![0] === fence[0] && open[1]!.length >= fence.length) fence = undefined;
       else write(`${DIM}│${RESET} ${CODE}${raw}${RESET}\n`);
       return;
     }
