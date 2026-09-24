@@ -57,10 +57,21 @@ Every edit shows a red/green diff and asks before writing. Every bash command as
 
 Each session's messages save to `~/.fox-harness/sessions/<id>.json` after every step.
 
+## Instructions and skills
+
+Instructions work at two levels, monorepo style. Nothing walks up to the git root.
+
+- **Local.** `AGENTS.md` in the launch directory, or `CLAUDE.md` if there's no `AGENTS.md`.
+- **Global.** `~/.fox-harness/AGENTS.md`, `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md` (first found). Used only when there's no local file.
+- **Package.** The first time a tool reads or edits a file under a subdirectory with its own `AGENTS.md`/`CLAUDE.md`, that file is added to the tool result. It stacks with the root file. The nearest one wins, and each loads once per session.
+
+Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the launch directory and in your home directory. A local skill beats a global one with the same name. Only each skill's name, description and path go in the system prompt. The model reads `SKILL.md` with `read_file` when a task matches. Skills with `disable-model-invocation: true` are skipped.
+
 ## How it works
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
+- `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
 - `src/tools/index.ts` is the tool registry. Each tool bundles its spec (what the model sees) with the code that runs it, so the harness can't advertise a tool it can't execute. Each model family gets the edit tool it was trained on.
 - Edit tools only `plan`. They return `FileChange[]` (before/after per file). The agent passes that to the PreToolUse hook for the diff prompt, then writes it with `src/tools/changes.ts`.
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.

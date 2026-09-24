@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
+import type { Instructions, Skill } from "./context.ts";
 import type { Hooks } from "./events.ts";
 import type { Message, Provider, ToolSpec } from "./providers/types.ts";
 import { applyChanges } from "./tools/changes.ts";
@@ -31,9 +32,9 @@ export class Agent {
 
   async run(prompt: string, signal?: AbortSignal): Promise<void> {
     const { hooks, provider } = this.opts;
-    const blocked = await hooks.emit({ type: "UserPromptSubmit", prompt });
-    if (blocked) throw new Error(`Prompt blocked: ${blocked.block}`);
-    this.messages.push({ role: "user", text: prompt });
+    const submitted = await hooks.emit({ type: "UserPromptSubmit", prompt });
+    if (submitted.block) throw new Error(`Prompt blocked: ${submitted.block}`);
+    this.messages.push({ role: "user", text: submitted.context ? `${prompt}\n\n${submitted.context}` : prompt });
 
     const maxSteps = this.opts.maxSteps ?? 50;
     try {
@@ -88,7 +89,7 @@ export class Agent {
     }
 
     const denied = await hooks.emit({ type: "PreToolUse", tool: name, input, callId, changes });
-    if (denied) return `Tool call denied by user: ${denied.block}`;
+    if (denied.block) return `Tool call denied by user: ${denied.block}`;
 
     this.opts.onToolStart?.(name, input, changes);
     let result: ToolResult;
@@ -103,8 +104,8 @@ export class Agent {
   private async finish(name: string, input: unknown, r: ToolResult, changes?: FileChange[], started = false) {
     if (!started) this.opts.onToolStart?.(name, input);
     this.opts.onToolEnd?.(r.output, r.ok, changes);
-    await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok });
-    return r.output;
+    const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
+    return post.context ? `${r.output}\n\n${post.context}` : r.output;
   }
 
   private async save() {
@@ -117,7 +118,7 @@ export class Agent {
   }
 }
 
-export async function buildSystemPrompt(cwd: string, tools: Tool[]): Promise<string> {
+export function buildSystemPrompt(cwd: string, tools: Tool[], instructions?: Instructions, skills: Skill[] = []): string {
   let prompt = `You are fox-harness, a coding agent running in the user's terminal.
 Working directory: ${cwd}
 Platform: ${process.platform}
@@ -131,13 +132,12 @@ Guidelines:
 - Run the project's tests or typecheck after changes when they exist.
 - Be concise. When the task is done, reply with a short summary and no tool call.`;
 
-  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
-    const f = Bun.file(join(cwd, name));
-    if (await f.exists()) {
-      prompt += `\n\n# Project instructions (${name})\n${await f.text()}`;
-      break;
-    }
+  if (skills.length) {
+    prompt += `\n\n# Skills
+When a task matches a skill, read its SKILL.md with read_file first and follow it. Paths inside a skill are relative to its folder.
+${skills.map((s) => `- ${s.name}: ${s.description} (${s.path})`).join("\n")}`;
   }
+  if (instructions) prompt += `\n\n# Instructions (${instructions.path})\n${instructions.text}`;
   return prompt;
 }
 
