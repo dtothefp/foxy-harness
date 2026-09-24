@@ -5,7 +5,7 @@ import { Agent, buildSystemPrompt } from "./agent.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
-import { loadInstructions, loadSkills, watchPackageInstructions } from "./context.ts";
+import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider } from "./providers/types.ts";
@@ -75,7 +75,7 @@ try {
 }
 const tools = toolsFor(provider.name);
 const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
-watchPackageInstructions(hooks, cwd, instructions, (path) => console.log(dim(`⏺ Loaded ${path}`)));
+watchPackages(hooks, cwd, { instructions, skills }, (what) => console.log(dim(`⏺ Loaded ${what}`)));
 
 async function ask(question: string) {
   const answer = (await rl.question(dim(`${question} [Y/n/reason] `))).trim();
