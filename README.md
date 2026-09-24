@@ -36,6 +36,8 @@ Claude requests ask for adaptive thinking with summaries (`display: "summarized"
 
 `foxy-harness last` prints a short summary of the newest session. Provider, model, effort and thinking settings, then per step what came back (thinking shown or hidden, text length, tool calls) and token counts. `foxy-harness last <id-prefix>` picks a session. `/session` in the REPL prints the same for the current one. Inference profile ARNs are shortened so the account id doesn't show.
 
+Drag an image into the prompt (or type its path) and it's attached, so the model sees it. `read_file` opens images too, so the model can look at a screenshot path on its own. PNG, JPEG, GIF, WebP and HEIC. On macOS, images over 1568px or 3.5 MB and HEIC photos are converted with `sips` first. macOS screenshot names have a special space before AM/PM, and paths typed with a plain space still match.
+
 Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. End a line with `\` to type a newline.
 
 ## Configuration
@@ -103,7 +105,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.
 - `src/tools/edit-file.ts` is exact string replace for Claude (same shape as Claude Code's Edit).
 - `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies.
-- `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging.
+- `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Image files come back as an image (`src/images.ts`).
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
 - `docs/codex-backend.md` has the OAuth and wire-format details.

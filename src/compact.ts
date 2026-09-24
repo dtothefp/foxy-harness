@@ -15,12 +15,18 @@ export const CLEARED = "[Output cleared to save context. Run the tool again if y
 
 // Rough token count for text we haven't sent yet. Real usage replaces it after the next call.
 export const estimateTokens = (chars: number) => Math.ceil(chars / 4);
+// A 1568px image costs about 1600 tokens. Counted as characters so it goes through the same estimate.
+export const IMAGE_CHARS = 6400;
 
 // Returns the number of characters removed.
 export function clearToolResults(messages: Message[]): number {
   const tools = messages.filter((m) => m.role === "tool");
   let freed = 0;
   for (const m of tools.slice(0, -KEEP_RECENT)) {
+    if (m.images) {
+      freed += m.images.length * IMAGE_CHARS;
+      delete m.images;
+    }
     if (m.output.length < MIN_CHARS || m.output.startsWith(CLEARED)) continue;
     const next = m.context ? `${CLEARED}\n\n${m.context}` : CLEARED;
     freed += m.output.length - next.length;

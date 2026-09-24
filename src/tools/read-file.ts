@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { findFile, IMAGE_FILE, loadImage } from "../images.ts";
 import type { Tool } from "./types.ts";
 
 const DEFAULT_LIMIT = 2000;
@@ -8,7 +9,7 @@ export const readFileTool: Tool = {
   spec: {
     name: "read_file",
     description:
-      "Read a text file. Returns lines prefixed with line numbers (`  12→text`). " +
+      "Read a text file or look at an image (png, jpg, gif, webp, heic). Text comes back as lines prefixed with line numbers (`  12→text`). " +
       `Reads up to ${DEFAULT_LIMIT} lines; use offset/limit for longer files. Paths are relative to the working directory.`,
     parameters: {
       type: "object",
@@ -21,14 +22,19 @@ export const readFileTool: Tool = {
       additionalProperties: false,
     },
   },
-  hint: "read files with line numbers. Prefer it over cat, head or sed.",
+  hint: "read files with line numbers, or view an image (screenshots, photos). Prefer it over cat, head or sed.",
 
   async run(input, { cwd }) {
     const { path, offset = 1, limit = DEFAULT_LIMIT } = input as { path?: unknown; offset?: number; limit?: number };
     if (typeof path !== "string") return { output: "Invalid arguments: `path` must be a string.", ok: false };
 
-    const file = Bun.file(resolve(cwd, path));
-    if (!(await file.exists())) return { output: `No such file: ${path}`, ok: false };
+    const found = await findFile(resolve(cwd, path));
+    if (!found) return { output: `No such file: ${path}`, ok: false };
+    if (IMAGE_FILE.test(found)) {
+      const image = await loadImage(found);
+      return { output: `Image ${path}, attached.`, ok: true, images: [image] };
+    }
+    const file = Bun.file(found);
 
     const lines = (await file.text()).split("\n");
     const start = Math.max(1, Math.floor(offset));

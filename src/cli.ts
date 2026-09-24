@@ -6,7 +6,8 @@ import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
 import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
-import { ago, describeSession, findSession, type Session } from "./inspect.ts";
+import { imagesInPrompt } from "./images.ts";
+import { ago, describeSession, findSession, type Session, shortModel } from "./inspect.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider, Usage } from "./providers/types.ts";
@@ -184,7 +185,7 @@ const agent = new Agent({
   onToolEnd: (output, ok, changes, name, input) => {
     if (ok && (changes || name === "bash")) return;
     const lines = output.trimEnd().split("\n");
-    if (ok && name === "read_file") return console.log(dim(`  ⎿ ${lines.length} lines`));
+    if (ok && name === "read_file") return console.log(dim(`  ⎿ ${output.startsWith("Image ") ? "image" : `${lines.length} lines`}`));
     if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
     const max = ok ? 4 : 12;
     const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
@@ -253,12 +254,18 @@ async function turn(prompt: string) {
     if (prompt === "/model" || prompt.startsWith("/model ")) {
       const name = prompt.slice("/model".length).trim();
       if (name) agent.provider = makeProvider(name);
-      console.log(dim(`⏺ ${name ? "Switched to" : "Using"} ${agent.provider.model} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`));
+      console.log(dim(`⏺ ${name ? "Switched to" : "Using"} ${shortModel(agent.provider.model)} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`));
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
     } else if (prompt === "/compact") {
       if (!(await agent.compact("manual", controller.signal))) console.log(dim("Nothing to compact."));
-    } else await agent.run(prompt, controller.signal);
+    } else {
+      // Image paths in the prompt (dragged in from Finder) are attached so the model can see them.
+      const { images, errors } = await imagesInPrompt(prompt, cwd);
+      for (const img of images) console.log(dim(`⏺ Attached ${img.name}`));
+      for (const e of errors) console.log(red(`⏺ ${e}`));
+      await agent.run(prompt, controller.signal, images);
+    }
   } catch (err) {
     console.error(red(String(err)));
   } finally {
@@ -273,7 +280,7 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);

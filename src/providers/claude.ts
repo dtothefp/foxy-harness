@@ -1,7 +1,7 @@
 import type { Config } from "../config.ts";
 import { eventStreamEvents } from "./eventstream.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
+import { type Completion, type CompletionRequest, type Image, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
 
 // Claude over two transports that share one request and event shape:
 //   anthropic  the Messages API (API key or auth token)
@@ -99,6 +99,10 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
   };
 }
 
+function imageBlock(img: Image): Block {
+  return { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } };
+}
+
 function isNativeSummary(m: Message): boolean {
   return m.role === "summary" && (m.raw as Block | undefined)?.type === "compaction";
 }
@@ -181,12 +185,15 @@ function toMessages(messages: Message[]) {
   };
 
   for (const m of messages) {
-    if (m.role === "user") push("user", [{ type: "text", text: m.text }]);
+    if (m.role === "user") push("user", [...(m.images ?? []).map(imageBlock), { type: "text", text: m.text }]);
     else if (m.role === "summary") {
       if (isNativeSummary(m)) push("assistant", [m.raw as Block]);
       else push("user", [{ type: "text", text: SUMMARY_PREFIX + m.text }]);
     }
-    else if (m.role === "tool") push("user", [{ type: "tool_result", tool_use_id: m.callId, content: m.output }]);
+    else if (m.role === "tool") {
+      const content = m.images?.length ? [{ type: "text", text: m.output }, ...m.images.map(imageBlock)] : m.output;
+      push("user", [{ type: "tool_result", tool_use_id: m.callId, content }]);
+    }
     else if (m.raw) push("assistant", m.raw as Block[]);
     else {
       push("assistant", [
