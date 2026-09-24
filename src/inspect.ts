@@ -6,7 +6,7 @@ import type { Message, Usage } from "./providers/types.ts";
 
 // A plain-text summary of a session, short enough to read off a photo of the screen: provider, settings,
 // and per step what the model sent back (thinking shown or hidden, text, tool calls) with token counts.
-// `fox-harness last` prints the newest session file, `/session` the current one.
+// `foxy-harness last` prints the newest session file, `/session` the current one.
 
 export type Session = {
   provider?: string;

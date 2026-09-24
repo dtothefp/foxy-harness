@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "bin": {
-    "fox-harness": "src/cli.ts"
+    "foxy-harness": "src/cli.ts"
   },
   "scripts": {
     "start": "bun src/cli.ts",
     "login": "bun src/cli.ts login",
     "models": "bun src/cli.ts models",
     "typecheck": "tsc --noEmit",
-    "build": "bun build src/cli.ts --compile --outfile dist/fox-harness",
+    "build": "bun build src/cli.ts --compile --outfile dist/foxy-harness",
     "debug": "bun --inspect-wait=localhost:6499/foxy-harness src/cli.ts"
   },
   "devDependencies": {

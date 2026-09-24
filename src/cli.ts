@@ -89,7 +89,7 @@ if (args[0] === "models") {
   for (const m of models.filter((m) => m.visibility !== "hide")) console.log(`${m.slug.padEnd(24)} ${dim(m.description ?? "")}`);
   process.exit(0);
 }
-// `fox-harness last [id-prefix]` summarizes the newest session file (or a given one).
+// `foxy-harness last [id-prefix]` summarizes the newest session file (or a given one).
 if (args[0] === "last") {
   const found = await findSession(args[1]);
   if (!found) {

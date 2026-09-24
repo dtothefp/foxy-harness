@@ -108,7 +108,7 @@ async function refresh(file: AuthFile): Promise<AuthFile> {
     }),
   });
   if (!res.ok) {
-    throw new Error(`Token refresh failed (${res.status}). Run \`fox-harness login\` again.\n${await res.text()}`);
+    throw new Error(`Token refresh failed (${res.status}). Run \`foxy-harness login\` again.\n${await res.text()}`);
   }
   return persist((await res.json()) as TokenResponse, file.tokens.refresh_token);
 }
@@ -134,7 +134,7 @@ async function persist(t: TokenResponse, prevRefresh?: string): Promise<AuthFile
 // Returns a valid access token, refreshing when it expires within 5 minutes.
 export async function getAuth(opts: { forceRefresh?: boolean } = {}) {
   const f = Bun.file(AUTH_FILE);
-  if (!(await f.exists())) throw new Error("Not logged in. Run `fox-harness login`.");
+  if (!(await f.exists())) throw new Error("Not logged in. Run `foxy-harness login`.");
   let file = (await f.json()) as AuthFile;
   const exp = jwtClaims(file.tokens.access_token).exp as number | undefined;
   if (opts.forceRefresh || !exp || exp * 1000 - Date.now() < 5 * 60_000) file = await refresh(file);
