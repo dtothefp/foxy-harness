@@ -15,6 +15,8 @@ export type AgentOptions = {
   sessionId: string;
   system: string;
   maxSteps?: number;
+  // Declared to the model but not implemented by runTool. Used to demo the unknown-tool path.
+  extraTools?: ToolSpec[];
   onText?: (delta: string) => void;
   onToolStart?: (name: string, input: unknown) => void;
   onToolEnd?: (output: string, ok: boolean) => void;
@@ -40,7 +42,7 @@ export class Agent {
         const res = await provider.complete({
           system: this.opts.system,
           messages: this.messages,
-          tools: TOOLS,
+          tools: [...TOOLS, ...(this.opts.extraTools ?? [])],
           signal,
           onText: this.opts.onText,
         });

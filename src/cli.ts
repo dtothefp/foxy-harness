@@ -20,6 +20,7 @@ const option = (name: string) => {
 };
 
 const yolo = flag("--yolo");
+const demoUnknownTool = flag("--demo-unknown-tool");
 const model = option("--model") ?? process.env.HARNESS_MODEL ?? "gpt-5.5";
 
 if (args[0] === "login") {
@@ -52,6 +53,21 @@ const agent = new Agent({
   cwd,
   sessionId,
   system: await buildSystemPrompt(cwd),
+  // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
+  extraTools: demoUnknownTool
+    ? [
+        {
+          name: "read_file",
+          description: "Read a file and return its contents. Prefer this over bash for reading files.",
+          parameters: {
+            type: "object",
+            properties: { path: { type: "string" } },
+            required: ["path"],
+            additionalProperties: false,
+          },
+        },
+      ]
+    : undefined,
   onText: (d) => process.stdout.write(d),
   onToolStart: (_name, input) => {
     if (yolo) console.log(`${cyan("$")} ${(input as { command?: string }).command}`);

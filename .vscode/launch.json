@@ -12,6 +12,17 @@
       "stopOnEntry": false
     },
     {
+      // Declares a read_file tool the harness never implements. The model calls it,
+      // runTool returns "Unknown tool: read_file", and the model falls back to bash.
+      "name": "Debug: unimplemented tool demo",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "--demo-unknown-tool", "Use the read_file tool to read README.md, then tell me its first heading."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
       // Interactive REPL. First run `bun run debug` in the terminal, then start this.
       "name": "Debug: attach to REPL (bun run debug)",
       "type": "bun",
