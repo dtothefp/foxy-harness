@@ -41,7 +41,8 @@ export function describeSession(s: Session, header?: string): string {
   for (const m of s.messages) {
     if (m.role === "user") {
       step = 0;
-      out.push(`${++turn}  › ${oneLine(m.text, 60)}`);
+      const attachments = m.attachments?.length ? ` (+${m.attachments.length} attached)` : "";
+      out.push(`${++turn}  › ${oneLine(m.text, 60)}${attachments}`);
     } else if (m.role === "summary") {
       out.push(`   compacted (${m.raw ? "server-side" : "own summary"})`);
     } else if (m.role === "assistant") {
@@ -92,7 +93,7 @@ function usageLine(u: Usage): string {
 const k = (n = 0) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : String(n));
 
 // An inference profile ARN carries the account id. Show only the part after the last slash.
-const shortModel = (m: string) => (m.startsWith("arn:") ? `…/${m.split("/").at(-1)}` : m);
+export const shortModel = (m: string) => (m.startsWith("arn:") ? `…/${m.split("/").at(-1)}` : m);
 
 function oneLine(s: string, max: number): string {
   const line = s.trim().split("\n")[0]!;

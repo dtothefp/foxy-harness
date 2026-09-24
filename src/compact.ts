@@ -1,3 +1,4 @@
+import { attachmentChars } from "./attachments.ts";
 import type { CompletionRequest, Message, Provider } from "./providers/types.ts";
 
 // Context management, two stages, checked before each model call:
@@ -21,6 +22,10 @@ export function clearToolResults(messages: Message[]): number {
   const tools = messages.filter((m) => m.role === "tool");
   let freed = 0;
   for (const m of tools.slice(0, -KEEP_RECENT)) {
+    if (m.attachments) {
+      freed += m.attachments.reduce((n, a) => n + attachmentChars(a), 0);
+      delete m.attachments;
+    }
     if (m.output.length < MIN_CHARS || m.output.startsWith(CLEARED)) continue;
     const next = m.context ? `${CLEARED}\n\n${m.context}` : CLEARED;
     freed += m.output.length - next.length;

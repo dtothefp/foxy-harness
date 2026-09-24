@@ -1,7 +1,7 @@
-import type { ToolSpec } from "../providers/types.ts";
+import type { Attachment, ToolSpec } from "../providers/types.ts";
 
 export type ToolContext = { cwd: string; signal?: AbortSignal };
-export type ToolResult = { output: string; ok: boolean };
+export type ToolResult = { output: string; ok: boolean; attachments?: Attachment[] };
 
 // One file write planned by an edit tool. `path` is relative to the working directory.
 export type FileChange = {

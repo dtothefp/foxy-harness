@@ -1,6 +1,6 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
+import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
 
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
 const BASE = "https://chatgpt.com/backend-api/codex";
@@ -64,14 +64,23 @@ async function send(req: CompletionRequest, model: string, sessionId: string, ef
 
 function toInput(messages: Message[]): unknown[] {
   const input: unknown[] = [];
+  // Function call outputs are text only. Images from a batch of tool results follow as one user message,
+  // the way Codex CLI's view_image does it.
+  let pending: Attachment[] = [];
+  const flush = () => {
+    if (pending.length) input.push({ type: "message", role: "user", content: pending.map(inputAttachment) });
+    pending = [];
+  };
   for (const m of messages) {
+    if (m.role !== "tool") flush();
     if (m.role === "user") {
-      input.push({ type: "message", role: "user", content: [{ type: "input_text", text: m.text }] });
+      input.push({ type: "message", role: "user", content: [...(m.attachments ?? []).map(inputAttachment), { type: "input_text", text: m.text }] });
     } else if (m.role === "summary") {
       if (m.raw) input.push(stripId(m.raw));
       else input.push({ type: "message", role: "user", content: [{ type: "input_text", text: SUMMARY_PREFIX + m.text }] });
     } else if (m.role === "tool") {
       input.push({ type: "function_call_output", call_id: m.callId, output: m.output });
+      pending.push(...(m.attachments ?? []));
     } else if (m.raw) {
       // With store:false the server keeps nothing, so item ids can't be referenced. Strip them.
       for (const item of m.raw) input.push(stripId(item));
@@ -79,7 +88,13 @@ function toInput(messages: Message[]): unknown[] {
       input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: m.text }] });
     }
   }
+  flush();
   return input;
+}
+
+function inputAttachment(a: Attachment) {
+  const url = `data:${a.mediaType};base64,${a.data}`;
+  return a.mediaType === "application/pdf" ? { type: "input_file", filename: a.name, file_data: url } : { type: "input_image", image_url: url };
 }
 
 function stripId(item: unknown) {

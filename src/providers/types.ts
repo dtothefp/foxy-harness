@@ -4,11 +4,14 @@
 
 export type ToolCall = { id: string; name: string; input: unknown };
 
+// A base64 image or PDF, attached to a prompt (dragged in) or a tool result (read_file). `pages` is set for PDFs.
+export type Attachment = { name: string; mediaType: string; data: string; pages?: number };
+
 export type Message =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; attachments?: Attachment[] }
   | { role: "assistant"; text: string; toolCalls: ToolCall[]; raw?: unknown[]; usage?: Usage }
   // `context` is what a PostToolUse hook appended to `output` (package instructions). It survives clearing.
-  | { role: "tool"; callId: string; output: string; context?: string }
+  | { role: "tool"; callId: string; output: string; context?: string; attachments?: Attachment[] }
   // Stands in for every message before it after compaction. `raw` is the provider's native
   // compaction item (Codex's encrypted item, Claude's signed block). Without it, `text` is our own summary.
   | { role: "summary"; text: string; raw?: unknown };
@@ -50,8 +53,12 @@ export interface Provider {
 
 export const SUMMARY_PREFIX = "Summary of the conversation so far (earlier messages were compacted):\n\n";
 
-// Reasoning summaries run a few paragraphs. Show one line, the bold heading if there is one ("Inspecting test setup").
-export function reasoningHeading(text: string): string | undefined {
-  const line = text.match(/^\s*\*\*(.+?)\*\*/)?.[1] ?? text.trim().split("\n")[0]!;
-  return line.trim().slice(0, 100) || undefined;
+// Reasoning summaries run a few paragraphs. Show one line, the bold heading if there is one
+// ("Inspecting test setup"), else the first sentence, cut at a word boundary.
+export function reasoningHeading(text: string, max = 110): string | undefined {
+  const heading = text.match(/^\s*\*\*(.+?)\*\*/)?.[1];
+  const first = text.trim().split("\n")[0]!;
+  let line = (heading ?? first.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? first).trim();
+  if (line.length > max) line = `${line.slice(0, line.lastIndexOf(" ", max - 1) > max / 2 ? line.lastIndexOf(" ", max - 1) : max - 1)}…`;
+  return line || undefined;
 }
