@@ -120,6 +120,7 @@ const agent = new Agent({
       ]
     : undefined,
   onText: (d) => process.stdout.write(d),
+  onReasoning: (s) => console.log(dim(`\x1b[3m✻ ${s}\x1b[23m`)),
   onToolStart: (name, input, changes) => {
     const args = input as { command?: string; path?: string };
     // Without --yolo the permission hook already printed the diff or command.
@@ -128,11 +129,15 @@ const agent = new Agent({
     else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
     else console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input).slice(0, 120)})`);
   },
-  onToolEnd: (output, ok, changes) => {
+  // Keep successful output short: the model reads the full result, the user sees a glimpse.
+  // Failures show more, since that's what the user needs to see.
+  onToolEnd: (output, ok, changes, name) => {
     if (ok && changes) return; // the diff says it all
     const lines = output.trimEnd().split("\n");
-    const shown = lines.slice(0, 12).join("\n");
-    const more = lines.length > 12 ? `\n… ${lines.length - 12} more lines` : "";
+    if (ok && name === "read_file") return console.log(dim(`  ⎿ ${lines.length} lines`));
+    const max = ok ? 4 : 12;
+    const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
+    const more = lines.length > max ? `\n  … ${lines.length - max} more lines` : "";
     console.log(ok ? dim(shown + more) : red(shown + more));
   },
   onStep: ({ ms, firstTokenMs, usage }) => {
@@ -163,7 +168,7 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`fox-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\nctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\nctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);

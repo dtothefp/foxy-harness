@@ -21,8 +21,9 @@ export type AgentOptions = {
   // Advertised to the model but with no implementation. Used to demo the unknown-tool path.
   fakeTools?: ToolSpec[];
   onText?: (delta: string) => void;
+  onReasoning?: (summary: string) => void;
   onToolStart?: (name: string, input: unknown, changes?: FileChange[]) => void;
-  onToolEnd?: (output: string, ok: boolean, changes?: FileChange[]) => void;
+  onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
 };
 
@@ -46,6 +47,7 @@ export class Agent {
           tools: [...this.opts.tools.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
           signal,
           onText: this.opts.onText,
+          onReasoning: this.opts.onReasoning,
         });
         this.opts.onStep?.({ ms: performance.now() - started, firstTokenMs: res.firstTokenMs, usage: res.usage });
         this.messages.push({ role: "assistant", text: res.text, toolCalls: res.toolCalls, raw: res.raw });
@@ -103,7 +105,7 @@ export class Agent {
 
   private async finish(name: string, input: unknown, r: ToolResult, changes?: FileChange[], started = false) {
     if (!started) this.opts.onToolStart?.(name, input);
-    this.opts.onToolEnd?.(r.output, r.ok, changes);
+    this.opts.onToolEnd?.(r.output, r.ok, changes, name);
     const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
     return post.context ? `${r.output}\n\n${post.context}` : r.output;
   }
@@ -119,7 +121,7 @@ export class Agent {
 }
 
 export function buildSystemPrompt(cwd: string, tools: Tool[], instructions?: Instructions, skills: Skill[] = []): string {
-  let prompt = `You are fox-harness, a coding agent running in the user's terminal.
+  let prompt = `You are foxy-harness, a coding agent running in the user's terminal.
 Working directory: ${cwd}
 Platform: ${process.platform}
 
@@ -130,7 +132,12 @@ Guidelines:
 - Explore before editing. Prefer rg and fd if installed.
 - Read a file before editing it. Make small targeted edits, never rewrite a whole file to change a few lines.
 - Run the project's tests or typecheck after changes when they exist.
-- Be concise. When the task is done, reply with a short summary and no tool call.`;
+
+Communication:
+- The user watches you work in a terminal. Before each group of tool calls, write one short line (under 15 words) on what you're doing and why, e.g. "Checking how config is loaded before adding the flag." Skip it for obvious follow-ups.
+- Don't narrate individual commands, restate tool output, or say what you're about to say.
+- When the task is done, reply without a tool call in at most 5 short lines: what changed or what you found, how you verified it, and anything the user must do. No headers, no step-by-step recap, no closing offers.
+- Go longer only when the user asks for an explanation or detail.`;
 
   if (skills.length) {
     prompt += `\n\n# Skills

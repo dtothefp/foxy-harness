@@ -13,7 +13,7 @@ export function codexProvider(model: string, sessionId: string): Provider {
       let res = await send(req, model, sessionId, false);
       if (res.status === 401) res = await send(req, model, sessionId, true);
       if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
-      return readStream(res, req.onText);
+      return readStream(res, req.onText, req.onReasoning);
     },
   };
 }
@@ -70,7 +70,11 @@ function toInput(messages: Message[]): unknown[] {
   return input;
 }
 
-async function readStream(res: Response, onText?: (d: string) => void): Promise<Completion> {
+async function readStream(
+  res: Response,
+  onText?: (d: string) => void,
+  onReasoning?: (s: string) => void,
+): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
 
@@ -81,6 +85,12 @@ async function readStream(res: Response, onText?: (d: string) => void): Promise<
         out.text += ev.delta;
         onText?.(ev.delta);
         break;
+      // Reasoning summaries are a few paragraphs per step. Show only the heading, e.g. "Inspecting test setup".
+      case "response.reasoning_summary_text.done": {
+        const line = String(ev.text ?? "").match(/^\s*\*\*(.+?)\*\*/)?.[1] ?? String(ev.text ?? "").split("\n")[0]!;
+        if (line.trim()) onReasoning?.(line.trim().slice(0, 100));
+        break;
+      }
       case "response.output_item.done": {
         out.firstTokenMs ??= performance.now() - started;
         out.raw.push(ev.item);

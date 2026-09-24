@@ -68,7 +68,7 @@
       "name": "Debug: attach to REPL (bun run debug)",
       "type": "bun",
       "request": "attach",
-      "url": "ws://localhost:6499/fox-harness"
+      "url": "ws://localhost:6499/foxy-harness"
     }
   ],
   "inputs": [

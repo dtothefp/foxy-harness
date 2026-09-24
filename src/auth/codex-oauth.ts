@@ -1,3 +1,4 @@
+import { existsSync, renameSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -10,9 +11,13 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
 const PORT = 1455;
 const REDIRECT = `http://localhost:${PORT}/auth/callback`;
-export const ORIGINATOR = "fox_harness";
+export const ORIGINATOR = "foxy_harness";
 
-export const HARNESS_HOME = process.env.HARNESS_HOME ?? join(homedir(), ".fox-harness");
+export const HARNESS_HOME = process.env.HARNESS_HOME ?? join(homedir(), ".foxy-harness");
+
+// One-time move from the pre-rename home, so an existing login and sessions carry over.
+const OLD_HOME = join(homedir(), ".fox-harness");
+if (!process.env.HARNESS_HOME && !existsSync(HARNESS_HOME) && existsSync(OLD_HOME)) renameSync(OLD_HOME, HARNESS_HOME);
 const AUTH_FILE = join(HARNESS_HOME, "auth.json");
 
 type TokenResponse = { id_token?: string; access_token: string; refresh_token?: string };
@@ -68,7 +73,7 @@ export async function login(): Promise<void> {
           return new Response("Login failed.", { status: 400 });
         }
         resolve(c);
-        return new Response("Logged in to fox-harness. You can close this tab.");
+        return new Response("Logged in to foxy-harness. You can close this tab.");
       },
     });
     console.log(`Opening browser. If it doesn't open, visit:\n${url}\n`);
@@ -103,7 +108,7 @@ async function refresh(file: AuthFile): Promise<AuthFile> {
     }),
   });
   if (!res.ok) {
-    throw new Error(`Token refresh failed (${res.status}). Run \`harness login\` again.\n${await res.text()}`);
+    throw new Error(`Token refresh failed (${res.status}). Run \`fox-harness login\` again.\n${await res.text()}`);
   }
   return persist((await res.json()) as TokenResponse, file.tokens.refresh_token);
 }
@@ -129,7 +134,7 @@ async function persist(t: TokenResponse, prevRefresh?: string): Promise<AuthFile
 // Returns a valid access token, refreshing when it expires within 5 minutes.
 export async function getAuth(opts: { forceRefresh?: boolean } = {}) {
   const f = Bun.file(AUTH_FILE);
-  if (!(await f.exists())) throw new Error("Not logged in. Run `harness login`.");
+  if (!(await f.exists())) throw new Error("Not logged in. Run `fox-harness login`.");
   let file = (await f.json()) as AuthFile;
   const exp = jwtClaims(file.tokens.access_token).exp as number | undefined;
   if (opts.forceRefresh || !exp || exp * 1000 - Date.now() < 5 * 60_000) file = await refresh(file);

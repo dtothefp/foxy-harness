@@ -1,4 +1,4 @@
-# fox-harness
+# foxy-harness
 
 A small coding agent for the terminal. TypeScript on Bun. One loop, three tools (`read_file`, an edit tool, `bash`). Runs on ChatGPT (Codex) or Claude.
 
@@ -12,7 +12,7 @@ bun run models       # list models your plan can use
 
 For Claude, see Configuration below. Claude subscription login isn't allowed in third-party tools, so it's Bedrock or an API key.
 
-Tokens are stored in `~/.fox-harness/auth.json` (mode 600). It's our own file, not Codex's, because refresh tokens rotate and sharing one would log Codex out.
+Tokens are stored in `~/.foxy-harness/auth.json` (mode 600). It's our own file, not Codex's, because refresh tokens rotate and sharing one would log Codex out.
 
 ## Use
 
@@ -24,12 +24,16 @@ bun src/cli.ts --model sonnet         # opus, sonnet, haiku, or any claude-* id
 bun src/cli.ts --provider bedrock     # codex | bedrock | anthropic
 ```
 
+`bun link` once puts a `fox-harness` command on your PATH, so you can run it from any repo.
+
+The agent narrates in short lines. A dim `✻` heading for each reasoning step (Codex models), one line before each batch of tool calls, and a final answer of about five lines. Tool output is trimmed to a glimpse (the model still gets all of it). Failures show more.
+
 ## Configuration
 
 Nothing is hardcoded. Settings come from three places, later wins.
 
 1. `~/.claude/settings.json` `env` block (or `$CLAUDE_CONFIG_DIR`). A machine already set up for Claude Code works as is.
-2. `~/.fox-harness/settings.json` `env` block, for harness-only overrides.
+2. `~/.foxy-harness/settings.json` `env` block, for harness-only overrides.
 3. Real environment variables.
 
 Values are read, never exported, so bash commands the agent runs don't see your tokens.
@@ -55,14 +59,14 @@ Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gate
 
 Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` (or `HARNESS_YOLO=1`) skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
 
-Each session's messages save to `~/.fox-harness/sessions/<id>.json` after every step.
+Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step.
 
 ## Instructions and skills
 
 Instructions work at two levels, monorepo style. Nothing walks up to the git root.
 
 - **Local.** `AGENTS.md` in the launch directory, or `CLAUDE.md` if there's no `AGENTS.md`.
-- **Global.** `~/.fox-harness/AGENTS.md`, `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md` (first found). Used only when there's no local file.
+- **Global.** `~/.foxy-harness/AGENTS.md`, `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md` (first found). Used only when there's no local file.
 - **Package.** The first time a tool reads or edits a file under a subdirectory with its own `AGENTS.md`/`CLAUDE.md`, that file is added to the tool result. It stacks with the root file. The nearest one wins, and each loads once per session.
 
 Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the launch directory and in your home directory. A local skill beats a global one with the same name. Only each skill's name, description and path go in the system prompt. The model reads `SKILL.md` with `read_file` when a task matches. Skills with `disable-model-invocation: true` are skipped.
