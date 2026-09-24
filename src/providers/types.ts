@@ -6,7 +6,7 @@ export type ToolCall = { id: string; name: string; input: unknown };
 
 export type Message =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; toolCalls: ToolCall[]; raw?: unknown[] }
+  | { role: "assistant"; text: string; toolCalls: ToolCall[]; raw?: unknown[]; usage?: Usage }
   // `context` is what a PostToolUse hook appended to `output` (package instructions). It survives clearing.
   | { role: "tool"; callId: string; output: string; context?: string }
   // Stands in for every message before it after compaction. `raw` is the provider's native
@@ -15,7 +15,8 @@ export type Message =
 
 export type ToolSpec = { name: string; description: string; parameters: object };
 
-export type Usage = { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
+// thinkingTokens is the part of outputTokens spent reasoning, where the backend reports it.
+export type Usage = { inputTokens?: number; outputTokens?: number; cachedTokens?: number; thinkingTokens?: number };
 
 export type CompletionRequest = {
   system: string;
@@ -39,6 +40,8 @@ export interface Provider {
   name: string;
   model: string;
   contextWindow: number;
+  // What the request asks for, e.g. { effort: "high", thinking: "adaptive, summarized" }. Saved with the session.
+  settings: Record<string, string>;
   complete(req: CompletionRequest): Promise<Completion>;
   // Server-side compaction, where the backend has it. Returns undefined when it isn't available,
   // and the agent falls back to its own summary (src/compact.ts).
@@ -46,3 +49,9 @@ export interface Provider {
 }
 
 export const SUMMARY_PREFIX = "Summary of the conversation so far (earlier messages were compacted):\n\n";
+
+// Reasoning summaries run a few paragraphs. Show one line, the bold heading if there is one ("Inspecting test setup").
+export function reasoningHeading(text: string): string | undefined {
+  const line = text.match(/^\s*\*\*(.+?)\*\*/)?.[1] ?? text.trim().split("\n")[0]!;
+  return line.trim().slice(0, 100) || undefined;
+}

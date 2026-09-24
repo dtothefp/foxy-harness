@@ -6,9 +6,10 @@ import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
 import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
+import { ago, describeSession, findSession, type Session } from "./inspect.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
-import type { Provider } from "./providers/types.ts";
+import type { Provider, Usage } from "./providers/types.ts";
 import { markdownStream } from "./markdown.ts";
 import { renderChanges } from "./render.ts";
 import { toolsFor } from "./tools/index.ts";
@@ -88,6 +89,17 @@ if (args[0] === "models") {
   for (const m of models.filter((m) => m.visibility !== "hide")) console.log(`${m.slug.padEnd(24)} ${dim(m.description ?? "")}`);
   process.exit(0);
 }
+// `foxy-harness last [id-prefix]` summarizes the newest session file (or a given one).
+if (args[0] === "last") {
+  const found = await findSession(args[1]);
+  if (!found) {
+    console.error(red("No saved sessions."));
+    process.exit(1);
+  }
+  const session = (await Bun.file(found.path).json()) as Session;
+  console.log(describeSession(session, `session ${found.id.slice(0, 8)} · ${ago(found.mtime)}`));
+  process.exit(0);
+}
 
 const cwd = process.cwd();
 const sessionId = crypto.randomUUID();
@@ -95,7 +107,7 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
 const hooks = new Hooks();
 
 function makeProvider(model = modelArg): Provider {
-  if (providerName === "codex") return codexProvider(model ?? "gpt-5.5", sessionId);
+  if (providerName === "codex") return codexProvider(model ?? "gpt-5.5", sessionId, config.get("HARNESS_EFFORT"));
   if (providerName !== "bedrock" && providerName !== "anthropic") {
     throw new Error(`Unknown provider "${providerName}". Use codex, bedrock or anthropic.`);
   }
@@ -181,10 +193,10 @@ const agent = new Agent({
   },
   onStep: ({ ms, firstTokenMs, usage }) => {
     md?.end();
-    const u = usage as { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
+    const u = usage as Usage;
     const ttft = firstTokenMs ? `ttft ${(firstTokenMs / 1000).toFixed(1)}s · ` : "";
     const used = u.inputTokens != null ? ` · ${Math.round((100 * (u.inputTokens + (u.outputTokens ?? 0))) / agent.contextWindow)}% context` : "";
-    console.log(dim(`\n${ttft}${(ms / 1000).toFixed(1)}s · in ${u.inputTokens ?? "?"} (cached ${u.cachedTokens ?? 0}) · out ${u.outputTokens ?? "?"}${used}`));
+    console.log(dim(`\n${ttft}${(ms / 1000).toFixed(1)}s · in ${u.inputTokens ?? "?"} (cached ${u.cachedTokens ?? 0}) · out ${u.outputTokens ?? "?"}${u.thinkingTokens ? ` (thinking ${u.thinkingTokens})` : ""}${used}`));
   },
   onCompact: (info) => {
     const k = (n: number) => `${Math.round(n / 1000)}k`;
@@ -242,6 +254,8 @@ async function turn(prompt: string) {
       const name = prompt.slice("/model".length).trim();
       if (name) agent.provider = makeProvider(name);
       console.log(dim(`⏺ ${name ? "Switched to" : "Using"} ${agent.provider.model} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`));
+    } else if (prompt === "/session") {
+      console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
     } else if (prompt === "/compact") {
       if (!(await agent.compact("manual", controller.signal))) console.log(dim("Nothing to compact."));
     } else await agent.run(prompt, controller.signal);
@@ -259,7 +273,7 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/model switches models, /compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);

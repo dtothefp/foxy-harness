@@ -1,15 +1,16 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Message, type Provider, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
+import { type Completion, type CompletionRequest, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
 
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
 const BASE = "https://chatgpt.com/backend-api/codex";
 const CONTEXT_WINDOW = 272_000;
 
-export function codexProvider(model: string, sessionId: string): Provider {
+// effort is HARNESS_EFFORT (minimal, low, medium, high, xhigh). Codex CLI's default is medium.
+export function codexProvider(model: string, sessionId: string, effort = "medium"): Provider {
   async function request(req: CompletionRequest, extra: unknown[] = []) {
-    let res = await send(req, model, sessionId, false, extra);
-    if (res.status === 401) res = await send(req, model, sessionId, true, extra);
+    let res = await send(req, model, sessionId, effort, false, extra);
+    if (res.status === 401) res = await send(req, model, sessionId, effort, true, extra);
     if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
     return readStream(res, req.onText, req.onReasoning);
   }
@@ -17,6 +18,7 @@ export function codexProvider(model: string, sessionId: string): Provider {
     name: "codex",
     model,
     contextWindow: CONTEXT_WINDOW,
+    settings: { effort, reasoning: "summary auto" },
     complete: (req) => request(req),
     // Remote compaction, what Codex CLI does. A compaction_trigger item at the end of the input makes the
     // server answer with one encrypted "compaction" item, which stands in for the history from then on.
@@ -28,7 +30,7 @@ export function codexProvider(model: string, sessionId: string): Provider {
   };
 }
 
-async function send(req: CompletionRequest, model: string, sessionId: string, forceRefresh: boolean, extra: unknown[]) {
+async function send(req: CompletionRequest, model: string, sessionId: string, effort: string, forceRefresh: boolean, extra: unknown[]) {
   const auth = await getAuth({ forceRefresh });
   return fetch(`${BASE}/responses`, {
     method: "POST",
@@ -50,7 +52,7 @@ async function send(req: CompletionRequest, model: string, sessionId: string, fo
       tools: req.tools.map((t) => ({ type: "function", ...t })),
       tool_choice: "auto",
       parallel_tool_calls: true,
-      reasoning: { effort: "medium", summary: "auto" },
+      reasoning: { effort, summary: "auto" },
       text: { verbosity: "low" },
       include: ["reasoning.encrypted_content"],
       store: false,
@@ -100,10 +102,9 @@ async function readStream(
         out.text += ev.delta;
         onText?.(ev.delta);
         break;
-      // Reasoning summaries are a few paragraphs per step. Show only the heading, e.g. "Inspecting test setup".
       case "response.reasoning_summary_text.done": {
-        const line = String(ev.text ?? "").match(/^\s*\*\*(.+?)\*\*/)?.[1] ?? String(ev.text ?? "").split("\n")[0]!;
-        if (line.trim()) onReasoning?.(line.trim().slice(0, 100));
+        const line = reasoningHeading(String(ev.text ?? ""));
+        if (line) onReasoning?.(line);
         break;
       }
       case "response.output_item.done": {
@@ -121,6 +122,7 @@ async function readStream(
             inputTokens: u.input_tokens,
             outputTokens: u.output_tokens,
             cachedTokens: u.input_tokens_details?.cached_tokens,
+            thinkingTokens: u.output_tokens_details?.reasoning_tokens,
           };
         }
         break;
