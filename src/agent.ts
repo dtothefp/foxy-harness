@@ -1,10 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
-import { CLEAR_AT, clearToolResults, COMPACT_AT, estimateTokens, IMAGE_CHARS, summarize } from "./compact.ts";
+import { attachmentChars } from "./attachments.ts";
+import { CLEAR_AT, clearToolResults, COMPACT_AT, estimateTokens, summarize } from "./compact.ts";
 import { formatSkills, type Instructions, type Skill } from "./context.ts";
 import type { Hooks } from "./events.ts";
-import type { CompletionRequest, Image, Message, Provider, ToolSpec } from "./providers/types.ts";
+import type { CompletionRequest, Attachment, Message, Provider, ToolSpec } from "./providers/types.ts";
 import { applyChanges } from "./tools/changes.ts";
 import type { FileChange, Tool, ToolResult } from "./tools/types.ts";
 
@@ -55,7 +56,7 @@ export class Agent {
     return this.opts.contextWindow ?? this.opts.provider.contextWindow;
   }
 
-  async run(prompt: string, signal?: AbortSignal, images?: Image[]): Promise<void> {
+  async run(prompt: string, signal?: AbortSignal, attachments?: Attachment[]): Promise<void> {
     const { hooks, provider } = this.opts;
     const submitted = await hooks.emit({ type: "UserPromptSubmit", prompt });
     if (submitted.block) throw new Error(`Prompt blocked: ${submitted.block}`);
@@ -65,7 +66,7 @@ export class Agent {
     try {
       // Before the prompt goes in, so a compaction here never swallows it.
       await this.manageContext(signal);
-      this.push(images?.length ? { role: "user", text, images } : { role: "user", text }, text.length + (images?.length ?? 0) * IMAGE_CHARS);
+      this.push(attachments?.length ? { role: "user", text, attachments } : { role: "user", text }, text.length + charsOf(attachments));
 
       for (let step = 0; step < maxSteps; step++) {
         // Mid-task compaction leaves only the summary. Tell the model to carry on from it.
@@ -85,8 +86,8 @@ export class Agent {
         }
 
         for (const call of res.toolCalls) {
-          const { output, context, images } = await this.runTool(call.id, call.name, call.input, signal);
-          this.push({ role: "tool", callId: call.id, output, context, images }, output.length + (images?.length ?? 0) * IMAGE_CHARS);
+          const { output, context, attachments } = await this.runTool(call.id, call.name, call.input, signal);
+          this.push({ role: "tool", callId: call.id, output, context, attachments }, output.length + charsOf(attachments));
         }
         await this.save();
       }
@@ -160,7 +161,7 @@ export class Agent {
     name: string,
     input: unknown,
     signal?: AbortSignal,
-  ): Promise<{ output: string; context?: string; images?: Image[] }> {
+  ): Promise<{ output: string; context?: string; attachments?: Attachment[] }> {
     const { hooks, cwd } = this.opts;
     const args = input as Record<string, unknown>;
     const ctx = { cwd, signal };
@@ -195,8 +196,8 @@ export class Agent {
     this.opts.onToolEnd?.(r.output, r.ok, changes, name, input);
     const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
     // Context is kept separately too, so clearing an old result doesn't drop package instructions.
-    const images = r.images?.length ? r.images : undefined;
-    return post.context ? { output: `${r.output}\n\n${post.context}`, context: post.context, images } : { output: r.output, images };
+    const attachments = r.attachments?.length ? r.attachments : undefined;
+    return post.context ? { output: `${r.output}\n\n${post.context}`, context: post.context, attachments } : { output: r.output, attachments };
   }
 
   // What's saved to the session file, and what /session summarizes.
@@ -242,6 +243,8 @@ ${formatSkills(skills)}`;
   if (instructions) prompt += `\n\n# Instructions (${instructions.path})\n${instructions.text}`;
   return prompt;
 }
+
+const charsOf = (a: Attachment[] = []) => a.reduce((n, x) => n + attachmentChars(x), 0);
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

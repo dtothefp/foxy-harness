@@ -6,7 +6,7 @@ import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
 import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
-import { imagesInPrompt } from "./images.ts";
+import { attachmentsInPrompt } from "./attachments.ts";
 import { ago, describeSession, findSession, type Session, shortModel } from "./inspect.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
@@ -185,7 +185,7 @@ const agent = new Agent({
   onToolEnd: (output, ok, changes, name, input) => {
     if (ok && (changes || name === "bash")) return;
     const lines = output.trimEnd().split("\n");
-    if (ok && name === "read_file") return console.log(dim(`  ⎿ ${output.startsWith("Image ") ? "image" : `${lines.length} lines`}`));
+    if (ok && name === "read_file") return console.log(dim(`  ⎿ ${output.startsWith("Attached ") ? "attached" : `${lines.length} lines`}`));
     if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
     const max = ok ? 4 : 12;
     const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
@@ -260,11 +260,11 @@ async function turn(prompt: string) {
     } else if (prompt === "/compact") {
       if (!(await agent.compact("manual", controller.signal))) console.log(dim("Nothing to compact."));
     } else {
-      // Image paths in the prompt (dragged in from Finder) are attached so the model can see them.
-      const { images, errors } = await imagesInPrompt(prompt, cwd);
-      for (const img of images) console.log(dim(`⏺ Attached ${img.name}`));
+      // Image and PDF paths in the prompt (dragged in from Finder) are attached so the model can see them.
+      const { attachments, errors } = await attachmentsInPrompt(prompt, cwd);
+      for (const a of attachments) console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} pages)` : ""}`));
       for (const e of errors) console.log(red(`⏺ ${e}`));
-      await agent.run(prompt, controller.signal, images);
+      await agent.run(prompt, controller.signal, attachments);
     }
   } catch (err) {
     console.error(red(String(err)));

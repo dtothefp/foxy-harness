@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { findFile, IMAGE_FILE, loadImage } from "../images.ts";
+import { ATTACHABLE, DOCUMENT_FILE, extractText, findFile, loadAttachment } from "../attachments.ts";
 import type { Tool } from "./types.ts";
 
 const DEFAULT_LIMIT = 2000;
@@ -9,7 +9,9 @@ export const readFileTool: Tool = {
   spec: {
     name: "read_file",
     description:
-      "Read a text file or look at an image (png, jpg, gif, webp, heic). Text comes back as lines prefixed with line numbers (`  12→text`). " +
+      "Read a file. Text comes back as lines prefixed with line numbers (`  12→text`). " +
+      "Images (png, jpg, gif, webp, heic) and PDFs are attached so you can see them. " +
+      "Word, RTF, ODT, Excel (xlsx) and PowerPoint (pptx) files are converted to text. " +
       `Reads up to ${DEFAULT_LIMIT} lines; use offset/limit for longer files. Paths are relative to the working directory.`,
     parameters: {
       type: "object",
@@ -22,7 +24,7 @@ export const readFileTool: Tool = {
       additionalProperties: false,
     },
   },
-  hint: "read files with line numbers, or view an image (screenshots, photos). Prefer it over cat, head or sed.",
+  hint: "read files with line numbers. Also views images and PDFs, and reads Word, Excel and PowerPoint as text. Prefer it over cat, head or sed.",
 
   async run(input, { cwd }) {
     const { path, offset = 1, limit = DEFAULT_LIMIT } = input as { path?: unknown; offset?: number; limit?: number };
@@ -30,13 +32,20 @@ export const readFileTool: Tool = {
 
     const found = await findFile(resolve(cwd, path));
     if (!found) return { output: `No such file: ${path}`, ok: false };
-    if (IMAGE_FILE.test(found)) {
-      const image = await loadImage(found);
-      return { output: `Image ${path}, attached.`, ok: true, images: [image] };
+    let text: string;
+    try {
+      if (ATTACHABLE.test(found)) {
+        const a = await loadAttachment(found);
+        return { output: `Attached ${path}${a.pages ? ` (${a.pages} pages)` : ""}.`, ok: true, attachments: [a] };
+      }
+      text = DOCUMENT_FILE.test(found) ? extractText(found) : await Bun.file(found).text();
+    } catch (err) {
+      return { output: err instanceof Error ? err.message : String(err), ok: false };
     }
-    const file = Bun.file(found);
+    // NUL bytes mean binary. Don't hand the model a page of mojibake.
+    if (text.slice(0, 8000).includes("\0")) return { output: `${path} is a binary file and can't be read as text.`, ok: false };
 
-    const lines = (await file.text()).split("\n");
+    const lines = text.split("\n");
     const start = Math.max(1, Math.floor(offset));
     const slice = lines.slice(start - 1, start - 1 + Math.max(1, Math.floor(limit)));
     const width = String(start + slice.length - 1).length;

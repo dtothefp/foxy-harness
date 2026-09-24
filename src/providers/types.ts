@@ -4,14 +4,14 @@
 
 export type ToolCall = { id: string; name: string; input: unknown };
 
-// Base64 image data, attached to a prompt (dragged in) or a tool result (read_file on an image).
-export type Image = { name: string; mediaType: string; data: string };
+// A base64 image or PDF, attached to a prompt (dragged in) or a tool result (read_file). `pages` is set for PDFs.
+export type Attachment = { name: string; mediaType: string; data: string; pages?: number };
 
 export type Message =
-  | { role: "user"; text: string; images?: Image[] }
+  | { role: "user"; text: string; attachments?: Attachment[] }
   | { role: "assistant"; text: string; toolCalls: ToolCall[]; raw?: unknown[]; usage?: Usage }
   // `context` is what a PostToolUse hook appended to `output` (package instructions). It survives clearing.
-  | { role: "tool"; callId: string; output: string; context?: string; images?: Image[] }
+  | { role: "tool"; callId: string; output: string; context?: string; attachments?: Attachment[] }
   // Stands in for every message before it after compaction. `raw` is the provider's native
   // compaction item (Codex's encrypted item, Claude's signed block). Without it, `text` is our own summary.
   | { role: "summary"; text: string; raw?: unknown };

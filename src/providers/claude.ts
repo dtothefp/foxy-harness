@@ -1,7 +1,7 @@
 import type { Config } from "../config.ts";
 import { eventStreamEvents } from "./eventstream.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Image, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
+import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
 
 // Claude over two transports that share one request and event shape:
 //   anthropic  the Messages API (API key or auth token)
@@ -99,9 +99,12 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
   };
 }
 
-function imageBlock(img: Image): Block {
-  return { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } };
+function attachmentBlock(a: Attachment): Block {
+  const source = { type: "base64", media_type: a.mediaType, data: a.data };
+  return isPdf(a) ? { type: "document", title: a.name, source } : { type: "image", source };
 }
+
+const isPdf = (a: Attachment) => a.mediaType === "application/pdf";
 
 function isNativeSummary(m: Message): boolean {
   return m.role === "summary" && (m.raw as Block | undefined)?.type === "compaction";
@@ -184,15 +187,25 @@ function toMessages(messages: Message[]) {
     else out.push({ role, content: [...blocks] });
   };
 
+  // Images go inside tool_result. PDFs follow the batch of results as document blocks instead
+  // (tool_result blocks have to come first in the user message).
+  let pending: Block[] = [];
+  const flush = () => {
+    push("user", pending);
+    pending = [];
+  };
   for (const m of messages) {
-    if (m.role === "user") push("user", [...(m.images ?? []).map(imageBlock), { type: "text", text: m.text }]);
+    if (m.role !== "tool") flush();
+    if (m.role === "user") push("user", [...(m.attachments ?? []).map(attachmentBlock), { type: "text", text: m.text }]);
     else if (m.role === "summary") {
       if (isNativeSummary(m)) push("assistant", [m.raw as Block]);
       else push("user", [{ type: "text", text: SUMMARY_PREFIX + m.text }]);
     }
     else if (m.role === "tool") {
-      const content = m.images?.length ? [{ type: "text", text: m.output }, ...m.images.map(imageBlock)] : m.output;
+      const images = (m.attachments ?? []).filter((a) => !isPdf(a));
+      const content = images.length ? [{ type: "text", text: m.output }, ...images.map(attachmentBlock)] : m.output;
       push("user", [{ type: "tool_result", tool_use_id: m.callId, content }]);
+      pending.push(...(m.attachments ?? []).filter(isPdf).map(attachmentBlock));
     }
     else if (m.raw) push("assistant", m.raw as Block[]);
     else {
@@ -202,6 +215,7 @@ function toMessages(messages: Message[]) {
       ]);
     }
   }
+  flush();
 
   // A second, moving breakpoint on the newest block, so each step reuses the cached conversation.
   const last = out.at(-1);

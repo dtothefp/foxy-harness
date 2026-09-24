@@ -41,8 +41,8 @@ export function describeSession(s: Session, header?: string): string {
   for (const m of s.messages) {
     if (m.role === "user") {
       step = 0;
-      const images = m.images?.length ? ` (+${m.images.length} image${m.images.length > 1 ? "s" : ""})` : "";
-      out.push(`${++turn}  › ${oneLine(m.text, 60)}${images}`);
+      const attachments = m.attachments?.length ? ` (+${m.attachments.length} attached)` : "";
+      out.push(`${++turn}  › ${oneLine(m.text, 60)}${attachments}`);
     } else if (m.role === "summary") {
       out.push(`   compacted (${m.raw ? "server-side" : "own summary"})`);
     } else if (m.role === "assistant") {
