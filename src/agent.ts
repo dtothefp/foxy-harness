@@ -1,9 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
+import { CLEAR_AT, clearToolResults, COMPACT_AT, estimateTokens, summarize } from "./compact.ts";
 import { formatSkills, type Instructions, type Skill } from "./context.ts";
 import type { Hooks } from "./events.ts";
-import type { Message, Provider, ToolSpec } from "./providers/types.ts";
+import type { CompletionRequest, Message, Provider, ToolSpec } from "./providers/types.ts";
 import { applyChanges } from "./tools/changes.ts";
 import type { FileChange, Tool, ToolResult } from "./tools/types.ts";
 
@@ -18,6 +19,8 @@ export type AgentOptions = {
   system: string;
   tools: Tool[];
   maxSteps?: number;
+  // Tokens the model can take. Defaults to the provider's. Compaction thresholds are fractions of it.
+  contextWindow?: number;
   // Advertised to the model but with no implementation. Used to demo the unknown-tool path.
   fakeTools?: ToolSpec[];
   onText?: (delta: string) => void;
@@ -25,32 +28,47 @@ export type AgentOptions = {
   onToolStart?: (name: string, input: unknown, changes?: FileChange[]) => void;
   onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
+  onCompact?: (info: CompactInfo) => void;
 };
+
+export type CompactInfo =
+  | { kind: "clear"; freedTokens: number }
+  | { kind: "start"; trigger: "auto" | "manual" }
+  | { kind: "failed"; error: string }
+  | { kind: "summary"; trigger: "auto" | "manual"; before: number; after: number; native: boolean };
 
 export class Agent {
   messages: Message[] = [];
+  // Size of the next request: the last call's input + output, plus estimates for anything added since.
+  contextTokens = 0;
   constructor(private opts: AgentOptions) {}
+
+  get contextWindow() {
+    return this.opts.contextWindow ?? this.opts.provider.contextWindow;
+  }
 
   async run(prompt: string, signal?: AbortSignal): Promise<void> {
     const { hooks, provider } = this.opts;
     const submitted = await hooks.emit({ type: "UserPromptSubmit", prompt });
     if (submitted.block) throw new Error(`Prompt blocked: ${submitted.block}`);
-    this.messages.push({ role: "user", text: submitted.context ? `${prompt}\n\n${submitted.context}` : prompt });
+    const text = submitted.context ? `${prompt}\n\n${submitted.context}` : prompt;
 
     const maxSteps = this.opts.maxSteps ?? 50;
     try {
+      // Before the prompt goes in, so a compaction here never swallows it.
+      await this.manageContext(signal);
+      this.push({ role: "user", text }, text.length);
+
       for (let step = 0; step < maxSteps; step++) {
+        // Mid-task compaction leaves only the summary. Tell the model to carry on from it.
+        if (step > 0 && (await this.manageContext(signal))) {
+          this.push({ role: "user", text: "Continue the task from the summary." }, 40);
+        }
         const started = performance.now();
-        const res = await provider.complete({
-          system: this.opts.system,
-          messages: this.messages,
-          tools: [...this.opts.tools.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
-          signal,
-          onText: this.opts.onText,
-          onReasoning: this.opts.onReasoning,
-        });
+        const res = await provider.complete({ ...this.request(signal), onText: this.opts.onText, onReasoning: this.opts.onReasoning });
         this.opts.onStep?.({ ms: performance.now() - started, firstTokenMs: res.firstTokenMs, usage: res.usage });
         this.messages.push({ role: "assistant", text: res.text, toolCalls: res.toolCalls, raw: res.raw });
+        if (res.usage.inputTokens != null) this.contextTokens = res.usage.inputTokens + (res.usage.outputTokens ?? 0);
 
         if (res.toolCalls.length === 0) {
           await this.save();
@@ -59,8 +77,8 @@ export class Agent {
         }
 
         for (const call of res.toolCalls) {
-          const output = await this.runTool(call.id, call.name, call.input, signal);
-          this.messages.push({ role: "tool", callId: call.id, output });
+          const { output, context } = await this.runTool(call.id, call.name, call.input, signal);
+          this.push({ role: "tool", callId: call.id, output, context }, output.length);
         }
         await this.save();
       }
@@ -73,7 +91,68 @@ export class Agent {
     }
   }
 
-  private async runTool(callId: string, name: string, input: unknown, signal?: AbortSignal): Promise<string> {
+  // Replaces the whole history with a summary. Called automatically near the window limit, or by /compact.
+  async compact(trigger: "auto" | "manual", signal?: AbortSignal): Promise<boolean> {
+    if (!this.messages.length) return false;
+    const pre = await this.opts.hooks.emit({ type: "PreCompact", trigger });
+    if (pre.block) return false;
+
+    const req = this.request(signal);
+    this.opts.onCompact?.({ kind: "start", trigger });
+    let native: Message | undefined;
+    let summary: Message;
+    try {
+      native = await this.opts.provider.compact?.(req).catch((err) => {
+        if (signal?.aborted) throw err;
+        return undefined; // server-side compaction unavailable, summarize ourselves
+      });
+      summary = native ?? (await summarize(this.opts.provider, req));
+    } catch (err) {
+      this.opts.onCompact?.({ kind: "failed", error: errorText(err) });
+      throw err;
+    }
+
+    const before = this.contextTokens;
+    this.messages = [summary];
+    this.contextTokens = estimateTokens(this.opts.system.length + JSON.stringify(summary).length);
+    this.opts.onCompact?.({ kind: "summary", trigger, before, after: this.contextTokens, native: !!native });
+    await this.save();
+    return true;
+  }
+
+  // Clear old tool results past CLEAR_AT, summarize past COMPACT_AT. Returns true if it summarized.
+  private async manageContext(signal?: AbortSignal): Promise<boolean> {
+    const window = this.contextWindow;
+    if (this.contextTokens > window * CLEAR_AT) {
+      const freed = estimateTokens(clearToolResults(this.messages));
+      if (freed > 0) {
+        this.contextTokens -= freed;
+        this.opts.onCompact?.({ kind: "clear", freedTokens: freed });
+      }
+    }
+    return this.contextTokens > window * COMPACT_AT && this.compact("auto", signal);
+  }
+
+  private request(signal?: AbortSignal): CompletionRequest {
+    return {
+      system: this.opts.system,
+      messages: this.messages,
+      tools: [...this.opts.tools.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
+      signal,
+    };
+  }
+
+  private push(message: Message, chars: number) {
+    this.messages.push(message);
+    this.contextTokens += estimateTokens(chars);
+  }
+
+  private async runTool(
+    callId: string,
+    name: string,
+    input: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ output: string; context?: string }> {
     const { hooks, cwd } = this.opts;
     const args = input as Record<string, unknown>;
     const ctx = { cwd, signal };
@@ -91,7 +170,7 @@ export class Agent {
     }
 
     const denied = await hooks.emit({ type: "PreToolUse", tool: name, input, callId, changes });
-    if (denied.block) return `Tool call denied by user: ${denied.block}`;
+    if (denied.block) return { output: `Tool call denied by user: ${denied.block}` };
 
     this.opts.onToolStart?.(name, input, changes);
     let result: ToolResult;
@@ -107,7 +186,8 @@ export class Agent {
     if (!started) this.opts.onToolStart?.(name, input);
     this.opts.onToolEnd?.(r.output, r.ok, changes, name);
     const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
-    return post.context ? `${r.output}\n\n${post.context}` : r.output;
+    // Context is kept separately too, so clearing an old result doesn't drop package instructions.
+    return post.context ? { output: `${r.output}\n\n${post.context}`, context: post.context } : { output: r.output };
   }
 
   private async save() {
