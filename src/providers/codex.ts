@@ -145,7 +145,7 @@ function parseCall(item: { call_id: string; name: string; arguments: string }): 
 
 export async function listModels(): Promise<unknown> {
   const auth = await getAuth();
-  const res = await fetch(`${BASE}/models?client_version=0.1.0`, {
+  const res = await fetch(`${BASE}/models?client_version=0.200.0`, {
     headers: {
       Authorization: `Bearer ${auth.accessToken}`,
       "chatgpt-account-id": auth.accountId,

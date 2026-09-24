@@ -26,7 +26,7 @@ export type AgentOptions = {
   onText?: (delta: string) => void;
   onReasoning?: (summary: string) => void;
   onToolStart?: (name: string, input: unknown, changes?: FileChange[]) => void;
-  onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string) => void;
+  onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string, input: unknown) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
   onCompact?: (info: CompactInfo) => void;
 };
@@ -42,6 +42,14 @@ export class Agent {
   // Size of the next request: the last call's input + output, plus estimates for anything added since.
   contextTokens = 0;
   constructor(private opts: AgentOptions) {}
+
+  get provider() {
+    return this.opts.provider;
+  }
+  // /model swaps it between turns. Same provider family only, since the history holds its raw items.
+  set provider(p: Provider) {
+    this.opts.provider = p;
+  }
 
   get contextWindow() {
     return this.opts.contextWindow ?? this.opts.provider.contextWindow;
@@ -184,7 +192,7 @@ export class Agent {
 
   private async finish(name: string, input: unknown, r: ToolResult, changes?: FileChange[], started = false) {
     if (!started) this.opts.onToolStart?.(name, input);
-    this.opts.onToolEnd?.(r.output, r.ok, changes, name);
+    this.opts.onToolEnd?.(r.output, r.ok, changes, name, input);
     const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
     // Context is kept separately too, so clearing an old result doesn't drop package instructions.
     return post.context ? { output: `${r.output}\n\n${post.context}`, context: post.context } : { output: r.output };
