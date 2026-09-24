@@ -1,0 +1,21 @@
+{
+  "name": "harness",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "harness": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "login": "bun src/cli.ts login",
+    "models": "bun src/cli.ts models",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/cli.ts --compile --outfile dist/harness",
+    "debug": "bun --inspect-wait=localhost:6499/fox-harness src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // One-shot run, no stdin needed. --yolo skips the y/n prompt (the debug console can't answer it).
+      "name": "Debug: one-shot prompt",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "${input:prompt}"],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Advertises a web_search tool the harness never implements. The model calls it,
+      // runTool returns "Unknown tool: web_search", and the model has to cope.
+      "name": "Debug: unimplemented tool demo (web_search)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "--demo-unknown-tool", "Use web_search to find the latest Bun release version, then tell me what it is."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Exercises the real read_file tool.
+      "name": "Debug: read_file",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "read README.md, then tell me its first heading."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Watch an edit land as a red/green diff. Codex uses apply_patch.
+      // Set a breakpoint in runTool on `tool.plan(...)` to see the planned FileChange[].
+      "name": "Debug: edit demo (Codex, apply_patch)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Same demo on Claude, which uses edit_file. Needs ANTHROPIC_API_KEY (Bun loads app/.env automatically).
+      "name": "Debug: edit demo (Claude, edit_file)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "--model", "sonnet", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Same demo on Bedrock. Reads the Bedrock env from ~/.claude/settings.json (see README Configuration).
+      "name": "Debug: edit demo (Claude on Bedrock)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "--provider", "bedrock", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Interactive REPL. First run `bun run debug` in the terminal, then start this.
+      "name": "Debug: attach to REPL (bun run debug)",
+      "type": "bun",
+      "request": "attach",
+      "url": "ws://localhost:6499/fox-harness"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "prompt",
+      "type": "promptString",
+      "description": "Prompt for the agent",
+      "default": "list the files in src and tell me what each one does in one line"
+    }
+  ]
+}
