@@ -33,6 +33,8 @@ export type AgentOptions = {
 
 export type CompactInfo =
   | { kind: "clear"; freedTokens: number }
+  | { kind: "start"; trigger: "auto" | "manual" }
+  | { kind: "failed"; error: string }
   | { kind: "summary"; trigger: "auto" | "manual"; before: number; after: number; native: boolean };
 
 export class Agent {
@@ -96,11 +98,19 @@ export class Agent {
     if (pre.block) return false;
 
     const req = this.request(signal);
-    const native = await this.opts.provider.compact?.(req).catch((err) => {
-      if (signal?.aborted) throw err;
-      return undefined; // server-side compaction unavailable, summarize ourselves
-    });
-    const summary = native ?? (await summarize(this.opts.provider, req));
+    this.opts.onCompact?.({ kind: "start", trigger });
+    let native: Message | undefined;
+    let summary: Message;
+    try {
+      native = await this.opts.provider.compact?.(req).catch((err) => {
+        if (signal?.aborted) throw err;
+        return undefined; // server-side compaction unavailable, summarize ourselves
+      });
+      summary = native ?? (await summarize(this.opts.provider, req));
+    } catch (err) {
+      this.opts.onCompact?.({ kind: "failed", error: errorText(err) });
+      throw err;
+    }
 
     const before = this.contextTokens;
     this.messages = [summary];

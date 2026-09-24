@@ -69,7 +69,7 @@ Each step's footer shows how full the context window is. Two stages keep a long 
 - **Past 60%, old tool results are cleared.** All but the three newest get swapped for a stub telling the model to rerun the tool. No model call. Package instructions that rode in on a tool result are kept.
 - **Past 85%, the conversation is compacted.** The whole history is replaced by a summary. Codex uses the backend's own compaction (an encrypted item the model was trained on, same as Codex CLI). Claude on the API uses Anthropic's server-side compaction beta. Bedrock doesn't have it, so the model writes the summary itself. If compaction happens mid-task, the agent carries on from the summary.
 
-Type `/compact` in the REPL to compact now. A `PreCompact` hook can return `{ block }` to skip it.
+A spinner with elapsed time shows while a summary is written (about 10 to 20 seconds). Type `/compact` in the REPL to compact now. A `PreCompact` hook can return `{ block }` to skip it.
 
 ## Instructions and skills
 

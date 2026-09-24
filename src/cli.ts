@@ -16,6 +16,30 @@ const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 
+// One line that redraws in place with elapsed seconds, for waits with no streamed output (compaction).
+const spinner = (() => {
+  const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let started = 0;
+  const elapsed = () => Math.round((performance.now() - started) / 1000);
+  return {
+    start(label: string) {
+      started = performance.now();
+      if (!process.stdout.isTTY) return console.log(dim(`⏺ ${label}…`));
+      let i = 0;
+      const draw = () => process.stdout.write(`\r\x1b[2K${cyan(frames[i++ % frames.length]!)} ${dim(`${label}… ${elapsed()}s`)}`);
+      draw();
+      timer = setInterval(draw, 100);
+    },
+    stop() {
+      if (timer) process.stdout.write("\r\x1b[2K");
+      clearInterval(timer);
+      timer = undefined;
+      return elapsed();
+    },
+  };
+})();
+
 const args = process.argv.slice(2);
 const flag = (name: string) => {
   const i = args.indexOf(name);
@@ -150,8 +174,11 @@ const agent = new Agent({
   onCompact: (info) => {
     const k = (n: number) => `${Math.round(n / 1000)}k`;
     if (info.kind === "clear") return console.log(dim(`⏺ Cleared old tool results (~${k(info.freedTokens)} tokens)`));
+    if (info.kind === "start") return spinner.start(info.trigger === "auto" ? "Context is filling up, compacting" : "Compacting");
+    const secs = spinner.stop();
+    if (info.kind === "failed") return console.log(red(`⏺ Compaction failed after ${secs}s: ${info.error}`));
     const how = info.native ? "server-side" : "summary";
-    console.log(dim(`⏺ Compacted conversation, ${how} (~${k(info.before)} → ~${k(info.after)} tokens)`));
+    console.log(dim(`⏺ Compacted conversation, ${how}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`));
   },
 });
 
