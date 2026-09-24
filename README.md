@@ -10,7 +10,7 @@ bun run login        # Sign in with ChatGPT (loopback OAuth on localhost:1455)
 bun run models       # list models your plan can use
 ```
 
-For Claude, set `ANTHROPIC_API_KEY` (env or `.env`). Claude subscription login isn't allowed in third-party tools.
+For Claude, see Configuration below. Claude subscription login isn't allowed in third-party tools, so it's Bedrock or an API key.
 
 Tokens are stored in `~/.fox-harness/auth.json` (mode 600). It's our own file, not Codex's, because refresh tokens rotate and sharing one would log Codex out.
 
@@ -21,7 +21,36 @@ bun src/cli.ts                       # interactive
 bun src/cli.ts "fix the failing test" # one shot
 bun src/cli.ts --yolo --model gpt-5.5
 bun src/cli.ts --model sonnet         # opus, sonnet, haiku, or any claude-* id
+bun src/cli.ts --provider bedrock     # codex | bedrock | anthropic
 ```
+
+## Configuration
+
+Nothing is hardcoded. Settings come from three places, later wins.
+
+1. `~/.claude/settings.json` `env` block (or `$CLAUDE_CONFIG_DIR`). A machine already set up for Claude Code works as is.
+2. `~/.fox-harness/settings.json` `env` block, for harness-only overrides.
+3. Real environment variables.
+
+Values are read, never exported, so bash commands the agent runs don't see your tokens.
+
+| Variable | Meaning |
+|---|---|
+| `HARNESS_PROVIDER` | `codex`, `bedrock` or `anthropic`. Same as `--provider`. |
+| `HARNESS_MODEL` | Same as `--model`. |
+| `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
+| `ANTHROPIC_MODEL` | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`. |
+| `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | What each alias maps to. Required on Bedrock (model id or inference profile ARN). |
+| `ANTHROPIC_BEDROCK_BASE_URL` | Gateway in front of Bedrock. Default `https://bedrock-runtime.<region>.amazonaws.com`. |
+| `AWS_REGION` | Region. Taken from the ARN if unset. |
+| `AWS_BEARER_TOKEN_BEDROCK` or `ANTHROPIC_AUTH_TOKEN` | Sent as `Authorization: Bearer`. |
+| `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1` | Gateway handles AWS auth, send no AWS credentials. |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | Direct Anthropic API. |
+| `ANTHROPIC_CUSTOM_HEADERS` | Extra headers, one `Name: value` per line. |
+
+Without `--provider`, the harness picks Bedrock if `CLAUDE_CODE_USE_BEDROCK=1`, the Anthropic API if `--model` names a Claude model, else Codex.
+
+Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gateways are.
 
 Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
 
@@ -38,7 +67,7 @@ Each session's messages save to `~/.fox-harness/sessions/<id>.json` after every 
 - `src/diff.ts` + `src/render.ts` draw the GitHub-style diff.
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging.
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
-- `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `anthropic.ts` to the Messages API (with prompt-cache breakpoints), both over SSE. Bedrock and OpenRouter go here next.
+- `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
 - `docs/codex-backend.md` has the OAuth and wire-format details.
 
 ## Auth policy

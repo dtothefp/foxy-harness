@@ -8,6 +8,6 @@ import type { Tool } from "./types.ts";
 // Codex/GPT models use apply_patch, Claude uses exact string replace.
 // Keep the order stable. Tool specs sit at the front of the prompt cache.
 export function toolsFor(provider: string): Tool[] {
-  const edit = provider === "anthropic" ? editFileTool : applyPatchTool;
+  const edit = provider === "codex" ? applyPatchTool : editFileTool;
   return [readFileTool, edit, bashTool];
 }

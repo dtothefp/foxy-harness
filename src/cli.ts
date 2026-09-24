@@ -3,8 +3,10 @@ import { createInterface } from "node:readline/promises";
 import { Agent, buildSystemPrompt } from "./agent.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
-import { anthropicProvider, CLAUDE_ALIASES } from "./providers/anthropic.ts";
+import { loadConfig } from "./config.ts";
+import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
+import type { Provider } from "./providers/types.ts";
 import { renderChanges } from "./render.ts";
 import { toolsFor } from "./tools/index.ts";
 
@@ -24,8 +26,18 @@ const option = (name: string) => {
 
 const yolo = flag("--yolo");
 const demoUnknownTool = flag("--demo-unknown-tool");
-const requested = option("--model") ?? process.env.HARNESS_MODEL ?? "gpt-5.5";
-const model = CLAUDE_ALIASES[requested] ?? requested;
+const config = await loadConfig();
+const modelArg = option("--model") ?? config.get("HARNESS_MODEL");
+// codex | bedrock | anthropic. Without a flag: Bedrock if Claude Code is set up for it, the Anthropic API
+// if a Claude model was asked for, else Codex over the ChatGPT login.
+const providerName =
+  option("--provider") ??
+  config.get("HARNESS_PROVIDER") ??
+  (config.get("CLAUDE_CODE_USE_BEDROCK") === "1"
+    ? "bedrock"
+    : /^(claude|opus|sonnet|haiku|arn:)/i.test(modelArg ?? "")
+      ? "anthropic"
+      : "codex");
 
 if (args[0] === "login") {
   await login();
@@ -40,7 +52,23 @@ const cwd = process.cwd();
 const sessionId = crypto.randomUUID();
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const hooks = new Hooks();
-const provider = model.startsWith("claude") ? anthropicProvider(model) : codexProvider(model, sessionId);
+
+function makeProvider(): Provider {
+  if (providerName === "codex") return codexProvider(modelArg ?? "gpt-5.5", sessionId);
+  if (providerName !== "bedrock" && providerName !== "anthropic") {
+    throw new Error(`Unknown provider "${providerName}". Use codex, bedrock or anthropic.`);
+  }
+  const name = modelArg ?? config.get("ANTHROPIC_MODEL") ?? config.model ?? "sonnet";
+  return claudeProvider(providerName, resolveClaudeModel(name, providerName, config), config);
+}
+
+let provider: Provider;
+try {
+  provider = makeProvider();
+} catch (err) {
+  console.error(red(err instanceof Error ? err.message : String(err)));
+  process.exit(1);
+}
 const tools = toolsFor(provider.name);
 
 async function ask(question: string) {
@@ -127,7 +155,7 @@ const oneShot = args.join(" ").trim();
 if (oneShot) {
   await turn(oneShot);
 } else {
-  console.log(dim(`fox-harness · ${model} · ${cwd}\nctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`fox-harness · ${provider.name} · ${provider.model} · ${cwd}\nctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);

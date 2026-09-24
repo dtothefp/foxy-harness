@@ -54,6 +54,16 @@
       "stopOnEntry": false
     },
     {
+      // Same demo on Bedrock. Reads the Bedrock env from ~/.claude/settings.json (see README Configuration).
+      "name": "Debug: edit demo (Claude on Bedrock)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "--provider", "bedrock", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
       // Interactive REPL. First run `bun run debug` in the terminal, then start this.
       "name": "Debug: attach to REPL (bun run debug)",
       "type": "bun",
