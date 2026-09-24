@@ -7,7 +7,11 @@ export type ToolCall = { id: string; name: string; input: unknown };
 export type Message =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; toolCalls: ToolCall[]; raw?: unknown[] }
-  | { role: "tool"; callId: string; output: string };
+  // `context` is what a PostToolUse hook appended to `output` (package instructions). It survives clearing.
+  | { role: "tool"; callId: string; output: string; context?: string }
+  // Stands in for every message before it after compaction. `raw` is the provider's native
+  // compaction item (Codex's encrypted item, Claude's signed block). Without it, `text` is our own summary.
+  | { role: "summary"; text: string; raw?: unknown };
 
 export type ToolSpec = { name: string; description: string; parameters: object };
 
@@ -34,5 +38,11 @@ export type Completion = {
 export interface Provider {
   name: string;
   model: string;
+  contextWindow: number;
   complete(req: CompletionRequest): Promise<Completion>;
+  // Server-side compaction, where the backend has it. Returns undefined when it isn't available,
+  // and the agent falls back to its own summary (src/compact.ts).
+  compact?(req: CompletionRequest): Promise<Message | undefined>;
 }
+
+export const SUMMARY_PREFIX = "Summary of the conversation so far (earlier messages were compacted):\n\n";

@@ -1,7 +1,7 @@
 import type { Config } from "../config.ts";
 import { eventStreamEvents } from "./eventstream.ts";
 import { sseEvents } from "./sse.ts";
-import type { Completion, CompletionRequest, Message, Provider } from "./types.ts";
+import { type Completion, type CompletionRequest, type Message, type Provider, SUMMARY_PREFIX } from "./types.ts";
 
 // Claude over two transports that share one request and event shape:
 //   anthropic  the Messages API (API key or auth token)
@@ -13,6 +13,9 @@ export type ClaudeTransport = "anthropic" | "bedrock";
 
 const MAX_TOKENS = 32_000;
 const RETRIES = 3;
+const CONTEXT_WINDOW = 200_000;
+// Server-side compaction on demand. The Claude API has it, Bedrock doesn't, so Bedrock uses our own summary.
+const COMPACT_BETA = "compact-2026-09-04";
 
 // Fallback ids for the direct API. Bedrock needs ANTHROPIC_DEFAULT_<ALIAS>_MODEL, since ids and ARNs are per account.
 const ALIASES: Record<string, string> = {
@@ -36,28 +39,52 @@ export function resolveClaudeModel(name: string, transport: ClaudeTransport, con
 
 export function claudeProvider(transport: ClaudeTransport, model: string, config: Config): Provider {
   const endpoint = transport === "bedrock" ? bedrockEndpoint(model, config) : anthropicEndpoint(model, config);
+  async function send(req: CompletionRequest, extra: Record<string, unknown> = {}): Promise<Completion> {
+    const body = JSON.stringify({ ...endpoint.body, ...requestBody(req), ...extra });
+    // Every request that carries a compaction block needs the beta header, not just the one that made it.
+    const beta = extra.compaction || req.messages.some(isNativeSummary);
+    const headers = beta ? withBeta(endpoint.headers, COMPACT_BETA) : endpoint.headers;
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(endpoint.url, { method: "POST", signal: req.signal, headers, body });
+      if (res.ok) {
+        // Bedrock streams AWS event frames. The direct API and some gateways stream SSE.
+        const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
+        return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req.onText);
+      }
+      // 429 rate limited, 529 overloaded, other 5xx: back off and retry.
+      if (attempt < RETRIES && (res.status === 429 || res.status >= 500)) {
+        const wait = Number(res.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
+        await Bun.sleep(Math.min(wait, 20_000));
+        continue;
+      }
+      throw new Error(`${transport} ${res.status}: ${await res.text()}`);
+    }
+  }
+
   return {
     name: transport,
     model,
-    async complete(req) {
-      const body = JSON.stringify({ ...endpoint.body, ...requestBody(req) });
-      for (let attempt = 0; ; attempt++) {
-        const res = await fetch(endpoint.url, { method: "POST", signal: req.signal, headers: endpoint.headers, body });
-        if (res.ok) {
-          // Bedrock streams AWS event frames. The direct API and some gateways stream SSE.
-          const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
-          return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req.onText);
-        }
-        // 429 rate limited, 529 overloaded, other 5xx: back off and retry.
-        if (attempt < RETRIES && (res.status === 429 || res.status >= 500)) {
-          const wait = Number(res.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
-          await Bun.sleep(Math.min(wait, 20_000));
-          continue;
-        }
-        throw new Error(`${transport} ${res.status}: ${await res.text()}`);
-      }
-    },
+    contextWindow: CONTEXT_WINDOW,
+    complete: (req) => send(req),
+    // The response is a single signed compaction block, which goes first in messages from then on.
+    compact:
+      transport === "anthropic"
+        ? async (req) => {
+            const res = await send(req, { compaction: { type: "summarize" } });
+            const block = res.raw.find((b) => (b as Block).type === "compaction") as Block | undefined;
+            return block && { role: "summary", text: String(block.content ?? ""), raw: block };
+          }
+        : undefined,
   };
+}
+
+function isNativeSummary(m: Message): boolean {
+  return m.role === "summary" && (m.raw as Block | undefined)?.type === "compaction";
+}
+
+function withBeta(headers: Record<string, string>, beta: string): Record<string, string> {
+  const existing = headers["anthropic-beta"];
+  return { ...headers, "anthropic-beta": existing ? `${existing},${beta}` : beta };
 }
 
 function anthropicEndpoint(model: string, config: Config): Endpoint {
@@ -134,6 +161,10 @@ function toMessages(messages: Message[]) {
 
   for (const m of messages) {
     if (m.role === "user") push("user", [{ type: "text", text: m.text }]);
+    else if (m.role === "summary") {
+      if (isNativeSummary(m)) push("assistant", [m.raw as Block]);
+      else push("user", [{ type: "text", text: SUMMARY_PREFIX + m.text }]);
+    }
     else if (m.role === "tool") push("user", [{ type: "tool_result", tool_use_id: m.callId, content: m.output }]);
     else if (m.raw) push("assistant", m.raw as Block[]);
     else {

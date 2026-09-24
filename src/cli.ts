@@ -104,6 +104,7 @@ const agent = new Agent({
   cwd,
   sessionId,
   system: buildSystemPrompt(cwd, tools, instructions, skills),
+  contextWindow: Number(config.get("HARNESS_CONTEXT_WINDOW")) || undefined,
   // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
   fakeTools: demoUnknownTool
     ? [
@@ -143,7 +144,14 @@ const agent = new Agent({
   onStep: ({ ms, firstTokenMs, usage }) => {
     const u = usage as { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
     const ttft = firstTokenMs ? `ttft ${(firstTokenMs / 1000).toFixed(1)}s · ` : "";
-    console.log(dim(`\n${ttft}${(ms / 1000).toFixed(1)}s · in ${u.inputTokens ?? "?"} (cached ${u.cachedTokens ?? 0}) · out ${u.outputTokens ?? "?"}`));
+    const used = u.inputTokens != null ? ` · ${Math.round((100 * (u.inputTokens + (u.outputTokens ?? 0))) / agent.contextWindow)}% context` : "";
+    console.log(dim(`\n${ttft}${(ms / 1000).toFixed(1)}s · in ${u.inputTokens ?? "?"} (cached ${u.cachedTokens ?? 0}) · out ${u.outputTokens ?? "?"}${used}`));
+  },
+  onCompact: (info) => {
+    const k = (n: number) => `${Math.round(n / 1000)}k`;
+    if (info.kind === "clear") return console.log(dim(`⏺ Cleared old tool results (~${k(info.freedTokens)} tokens)`));
+    const how = info.native ? "server-side" : "summary";
+    console.log(dim(`⏺ Compacted conversation, ${how} (~${k(info.before)} → ~${k(info.after)} tokens)`));
   },
 });
 
@@ -154,7 +162,9 @@ async function turn(prompt: string) {
   const onSigint = () => controller.abort();
   process.once("SIGINT", onSigint);
   try {
-    await agent.run(prompt, controller.signal);
+    if (prompt === "/compact") {
+      if (!(await agent.compact("manual", controller.signal))) console.log(dim("Nothing to compact."));
+    } else await agent.run(prompt, controller.signal);
   } catch (err) {
     console.error(red(String(err)));
   } finally {
@@ -168,7 +178,7 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\nctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/compact summarizes the conversation, ctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);

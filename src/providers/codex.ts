@@ -1,24 +1,34 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
 import { sseEvents } from "./sse.ts";
-import type { Completion, CompletionRequest, Message, Provider, ToolCall } from "./types.ts";
+import { type Completion, type CompletionRequest, type Message, type Provider, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
 
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
 const BASE = "https://chatgpt.com/backend-api/codex";
+const CONTEXT_WINDOW = 272_000;
 
 export function codexProvider(model: string, sessionId: string): Provider {
+  async function request(req: CompletionRequest, extra: unknown[] = []) {
+    let res = await send(req, model, sessionId, false, extra);
+    if (res.status === 401) res = await send(req, model, sessionId, true, extra);
+    if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
+    return readStream(res, req.onText, req.onReasoning);
+  }
   return {
     name: "codex",
     model,
-    async complete(req) {
-      let res = await send(req, model, sessionId, false);
-      if (res.status === 401) res = await send(req, model, sessionId, true);
-      if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
-      return readStream(res, req.onText, req.onReasoning);
+    contextWindow: CONTEXT_WINDOW,
+    complete: (req) => request(req),
+    // Remote compaction, what Codex CLI does. A compaction_trigger item at the end of the input makes the
+    // server answer with one encrypted "compaction" item, which stands in for the history from then on.
+    async compact(req) {
+      const res = await request(req, [{ type: "compaction_trigger" }]);
+      const item = res.raw.find((i) => (i as { type?: string }).type === "compaction");
+      return item ? { role: "summary", text: "", raw: item } : undefined;
     },
   };
 }
 
-async function send(req: CompletionRequest, model: string, sessionId: string, forceRefresh: boolean) {
+async function send(req: CompletionRequest, model: string, sessionId: string, forceRefresh: boolean, extra: unknown[]) {
   const auth = await getAuth({ forceRefresh });
   return fetch(`${BASE}/responses`, {
     method: "POST",
@@ -36,7 +46,7 @@ async function send(req: CompletionRequest, model: string, sessionId: string, fo
     body: JSON.stringify({
       model,
       instructions: req.system,
-      input: toInput(req.messages),
+      input: [...toInput(req.messages), ...extra],
       tools: req.tools.map((t) => ({ type: "function", ...t })),
       tool_choice: "auto",
       parallel_tool_calls: true,
@@ -55,19 +65,24 @@ function toInput(messages: Message[]): unknown[] {
   for (const m of messages) {
     if (m.role === "user") {
       input.push({ type: "message", role: "user", content: [{ type: "input_text", text: m.text }] });
+    } else if (m.role === "summary") {
+      if (m.raw) input.push(stripId(m.raw));
+      else input.push({ type: "message", role: "user", content: [{ type: "input_text", text: SUMMARY_PREFIX + m.text }] });
     } else if (m.role === "tool") {
       input.push({ type: "function_call_output", call_id: m.callId, output: m.output });
     } else if (m.raw) {
       // With store:false the server keeps nothing, so item ids can't be referenced. Strip them.
-      for (const item of m.raw) {
-        const { id: _id, ...rest } = item as Record<string, unknown>;
-        input.push(rest);
-      }
+      for (const item of m.raw) input.push(stripId(item));
     } else if (m.text) {
       input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: m.text }] });
     }
   }
   return input;
+}
+
+function stripId(item: unknown) {
+  const { id: _id, ...rest } = item as Record<string, unknown>;
+  return rest;
 }
 
 async function readStream(

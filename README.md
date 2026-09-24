@@ -43,6 +43,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 | `HARNESS_PROVIDER` | `codex`, `bedrock` or `anthropic`. Same as `--provider`. |
 | `HARNESS_MODEL` | Same as `--model`. |
 | `HARNESS_YOLO=1` | Skip permission prompts. Same as `--yolo`. |
+| `HARNESS_CONTEXT_WINDOW` | Context window in tokens. Default 272000 (Codex), 200000 (Claude). Compaction thresholds scale with it. |
 | `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
 | `ANTHROPIC_MODEL` | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`. |
 | `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | What each alias maps to. Required on Bedrock (model id or inference profile ARN). |
@@ -61,6 +62,15 @@ Every edit shows a red/green diff and asks before writing. Every bash command as
 
 Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step.
 
+## Context and compaction
+
+Each step's footer shows how full the context window is. Two stages keep a long session under the limit.
+
+- **Past 60%, old tool results are cleared.** All but the three newest get swapped for a stub telling the model to rerun the tool. No model call. Package instructions that rode in on a tool result are kept.
+- **Past 85%, the conversation is compacted.** The whole history is replaced by a summary. Codex uses the backend's own compaction (an encrypted item the model was trained on, same as Codex CLI). Claude on the API uses Anthropic's server-side compaction beta. Bedrock doesn't have it, so the model writes the summary itself. If compaction happens mid-task, the agent carries on from the summary.
+
+Type `/compact` in the REPL to compact now. A `PreCompact` hook can return `{ block }` to skip it.
+
 ## Instructions and skills
 
 Instructions work at two levels, monorepo style. Nothing walks up to the git root.
@@ -74,8 +84,9 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 ## How it works
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
-- `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
+- `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
 - `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
+- `src/compact.ts` clears old tool results and holds the fallback summarizer. Providers with server-side compaction implement `compact()`, and the result is a `summary` message that replays in the provider's native form.
 - `src/tools/index.ts` is the tool registry. Each tool bundles its spec (what the model sees) with the code that runs it, so the harness can't advertise a tool it can't execute. Each model family gets the edit tool it was trained on.
 - Edit tools only `plan`. They return `FileChange[]` (before/after per file). The agent passes that to the PreToolUse hook for the diff prompt, then writes it with `src/tools/changes.ts`.
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.
