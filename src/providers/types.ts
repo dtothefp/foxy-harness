@@ -19,6 +19,8 @@ export type CompletionRequest = {
   tools: ToolSpec[];
   signal?: AbortSignal;
   onText?: (delta: string) => void;
+  // One short line per reasoning step (a summary heading), for models that expose one.
+  onReasoning?: (summary: string) => void;
 };
 
 export type Completion = {

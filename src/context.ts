@@ -8,7 +8,7 @@ import type { Hooks } from "./events.ts";
 //
 // Instructions use a two-level, monorepo-style rule instead of walking up to the git root:
 //   local    AGENTS.md (else CLAUDE.md) in the launch directory
-//   global   ~/.fox-harness/AGENTS.md, ~/.codex/AGENTS.md or ~/.claude/CLAUDE.md, only when there's no local file
+//   global   ~/.foxy-harness/AGENTS.md, ~/.codex/AGENTS.md or ~/.claude/CLAUDE.md, only when there's no local file
 //   package  when a tool touches a file under a subdirectory with its own AGENTS.md/CLAUDE.md,
 //            that file is added once, next to the tool result
 //

@@ -1,4 +1,4 @@
-# fox-harness
+# foxy-harness
 
 > `CLAUDE.md` is a symlink to this file.
 
