@@ -37,9 +37,10 @@ const sessionId = crypto.randomUUID();
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const hooks = new Hooks();
 
-// Built-in permission hook: confirm every bash command unless --yolo.
+// Built-in permission hook: confirm every bash command unless --yolo. read_file is read-only, so it's allowed.
 if (!yolo) {
   hooks.on("PreToolUse", async (e) => {
+    if (e.tool !== "bash") return;
     const cmd = (e.input as { command?: string }).command ?? JSON.stringify(e.input);
     const answer = (await rl.question(`${cyan("$")} ${cmd}\n${dim("run? [Y/n/reason] ")}`)).trim();
     if (answer === "" || /^y(es)?$/i.test(answer)) return;
@@ -54,23 +55,24 @@ const agent = new Agent({
   sessionId,
   system: await buildSystemPrompt(cwd),
   // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
-  extraTools: demoUnknownTool
+  fakeTools: demoUnknownTool
     ? [
         {
-          name: "read_file",
-          description: "Read a file and return its contents. Prefer this over bash for reading files.",
+          name: "web_search",
+          description: "Search the web and return the top results.",
           parameters: {
             type: "object",
-            properties: { path: { type: "string" } },
-            required: ["path"],
+            properties: { query: { type: "string" } },
+            required: ["query"],
             additionalProperties: false,
           },
         },
       ]
     : undefined,
   onText: (d) => process.stdout.write(d),
-  onToolStart: (_name, input) => {
-    if (yolo) console.log(`${cyan("$")} ${(input as { command?: string }).command}`);
+  onToolStart: (name, input) => {
+    if (name !== "bash") console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input)})`);
+    else if (yolo) console.log(`${cyan("$")} ${(input as { command?: string }).command}`);
   },
   onToolEnd: (output, ok) => {
     const lines = output.trimEnd().split("\n");

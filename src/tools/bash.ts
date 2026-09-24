@@ -1,23 +1,34 @@
 import { spawn } from "node:child_process";
+import type { Tool } from "./types.ts";
 
 // Stateless bash, mini-swe-agent style. Every call is a fresh process, so `cd`
 // and env vars don't persist. The model prefixes them when needed.
 
-export const bashTool = {
-  name: "bash",
-  description:
-    "Run a bash command in the project directory and return combined stdout/stderr. " +
-    "Each call runs in a fresh shell: cd and env vars do not persist between calls.",
-  parameters: {
-    type: "object",
-    properties: {
-      command: { type: "string", description: "The bash command to run" },
-      timeout_s: { type: "number", description: "Timeout in seconds (default 60)" },
+export const bashTool: Tool = {
+  spec: {
+    name: "bash",
+    description:
+      "Run a bash command in the project directory and return combined stdout/stderr. " +
+      "Each call runs in a fresh shell: cd and env vars do not persist between calls.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "The bash command to run" },
+        timeout_s: { type: "number", description: "Timeout in seconds (default 60)" },
+      },
+      required: ["command"],
+      additionalProperties: false,
     },
-    required: ["command"],
-    additionalProperties: false,
   },
-} as const;
+
+  async run(input, { cwd, signal }) {
+    const { command, timeout_s } = input as { command?: unknown; timeout_s?: number };
+    if (typeof command !== "string") return { output: "Invalid arguments: `command` must be a string.", ok: false };
+    const r = await runBash(command, { cwd, timeoutS: timeout_s, signal });
+    const output = r.timedOut ? `${r.output}\n[timed out]` : `${r.output}\n[exit ${r.exitCode}]`;
+    return { output, ok: r.exitCode === 0 };
+  },
+};
 
 const MAX_OUTPUT = 12_000;
 

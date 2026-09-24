@@ -12,13 +12,23 @@
       "stopOnEntry": false
     },
     {
-      // Declares a read_file tool the harness never implements. The model calls it,
-      // runTool returns "Unknown tool: read_file", and the model falls back to bash.
-      "name": "Debug: unimplemented tool demo",
+      // Advertises a web_search tool the harness never implements. The model calls it,
+      // runTool returns "Unknown tool: web_search", and the model has to cope.
+      "name": "Debug: unimplemented tool demo (web_search)",
       "type": "bun",
       "request": "launch",
       "program": "${workspaceFolder}/src/cli.ts",
-      "args": ["--yolo", "--demo-unknown-tool", "Use the read_file tool to read README.md, then tell me its first heading."],
+      "args": ["--yolo", "--demo-unknown-tool", "Use web_search to find the latest Bun release version, then tell me what it is."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Exercises the real read_file tool.
+      "name": "Debug: read_file",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "read README.md, then tell me its first heading."],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
     },

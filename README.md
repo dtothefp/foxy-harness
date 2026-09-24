@@ -1,6 +1,6 @@
 # fox-harness
 
-A small coding agent for the terminal. TypeScript on Bun. One loop, one bash tool.
+A small coding agent for the terminal. TypeScript on Bun. One loop, two tools (`bash`, `read_file`).
 
 ## Setup
 
@@ -20,7 +20,7 @@ bun src/cli.ts "fix the failing test" # one shot
 bun src/cli.ts --yolo --model gpt-5.5
 ```
 
-Every bash command asks for confirmation unless `--yolo`. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
+Every bash command asks for confirmation unless `--yolo`. `read_file` is read-only and never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
 
 Each session's messages save to `~/.fox-harness/sessions/<id>.json` after every step.
 
@@ -28,6 +28,8 @@ Each session's messages save to `~/.fox-harness/sessions/<id>.json` after every 
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
+- `src/tools/index.ts` is the tool registry. Each tool bundles its spec (what the model sees) with its `run` function, so the harness can't advertise a tool it can't execute.
+- `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging.
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend over SSE. Bedrock and OpenRouter go here next.
 - `docs/codex-backend.md` has the OAuth and wire-format details.

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
 import type { Hooks } from "./events.ts";
 import type { Message, Provider, ToolSpec } from "./providers/types.ts";
-import { bashTool, runBash } from "./tools/bash.ts";
+import { TOOLS } from "./tools/index.ts";
 
 // The whole agent: call the model, run any tool calls, feed results back, repeat
 // until the model answers without calling a tool. Trajectory is saved every step.
@@ -15,15 +15,13 @@ export type AgentOptions = {
   sessionId: string;
   system: string;
   maxSteps?: number;
-  // Declared to the model but not implemented by runTool. Used to demo the unknown-tool path.
-  extraTools?: ToolSpec[];
+  // Advertised to the model but with no implementation. Used to demo the unknown-tool path.
+  fakeTools?: ToolSpec[];
   onText?: (delta: string) => void;
   onToolStart?: (name: string, input: unknown) => void;
   onToolEnd?: (output: string, ok: boolean) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
 };
-
-const TOOLS: ToolSpec[] = [bashTool];
 
 export class Agent {
   messages: Message[] = [];
@@ -42,7 +40,7 @@ export class Agent {
         const res = await provider.complete({
           system: this.opts.system,
           messages: this.messages,
-          tools: [...TOOLS, ...(this.opts.extraTools ?? [])],
+          tools: [...TOOLS.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
           signal,
           onText: this.opts.onText,
         });
@@ -76,22 +74,10 @@ export class Agent {
     if (denied) return `Tool call denied by user: ${denied.block}`;
 
     this.opts.onToolStart?.(name, input);
-    let output: string;
-    let ok = true;
-    if (name !== "bash") {
-      output = `Unknown tool: ${name}`;
-      ok = false;
-    } else {
-      const { command, timeout_s } = input as { command?: string; timeout_s?: number };
-      if (typeof command !== "string") {
-        output = "Invalid arguments: `command` must be a string.";
-        ok = false;
-      } else {
-        const r = await runBash(command, { cwd, timeoutS: timeout_s, signal });
-        ok = r.exitCode === 0;
-        output = r.timedOut ? `${r.output}\n[timed out]` : `${r.output}\n[exit ${r.exitCode}]`;
-      }
-    }
+    const tool = TOOLS.find((t) => t.spec.name === name);
+    const { output, ok } = tool
+      ? await tool.run(input as Record<string, unknown>, { cwd, signal })
+      : { output: `Unknown tool: ${name}`, ok: false };
     this.opts.onToolEnd?.(output, ok);
     await hooks.emit({ type: "PostToolUse", tool: name, input, output, ok });
     return output;
@@ -112,7 +98,9 @@ export async function buildSystemPrompt(cwd: string): Promise<string> {
 Working directory: ${cwd}
 Platform: ${process.platform}
 
-You have one tool, bash. Each call runs in a fresh shell, so cd and exported env vars do not persist; prefix commands with \`cd dir &&\` when needed.
+Tools:
+- read_file: read files (with line numbers). Prefer it over cat/head/sed for reading.
+- bash: everything else. Each call runs in a fresh shell, so cd and exported env vars do not persist; prefix commands with \`cd dir &&\` when needed.
 - Explore before editing. Prefer rg and fd if installed.
 - Edit files with small targeted changes (heredocs, sed, or a short python/bun script). Never rewrite a whole file just to change a few lines.
 - Run the project's tests or typecheck after changes when they exist.
