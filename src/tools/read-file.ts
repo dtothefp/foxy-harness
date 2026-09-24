@@ -36,7 +36,7 @@ export const readFileTool: Tool = {
     try {
       if (ATTACHABLE.test(found)) {
         const a = await loadAttachment(found);
-        return { output: `Attached ${path}${a.pages ? ` (${a.pages} pages)` : ""}.`, ok: true, attachments: [a] };
+        return { output: `Attached ${path}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}.`, ok: true, attachments: [a] };
       }
       text = DOCUMENT_FILE.test(found) ? extractText(found) : await Bun.file(found).text();
     } catch (err) {

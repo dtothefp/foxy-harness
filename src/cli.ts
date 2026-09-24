@@ -262,7 +262,7 @@ async function turn(prompt: string) {
     } else {
       // Image and PDF paths in the prompt (dragged in from Finder) are attached so the model can see them.
       const { attachments, errors } = await attachmentsInPrompt(prompt, cwd);
-      for (const a of attachments) console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} pages)` : ""}`));
+      for (const a of attachments) console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}`));
       for (const e of errors) console.log(red(`⏺ ${e}`));
       await agent.run(prompt, controller.signal, attachments);
     }
