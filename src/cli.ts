@@ -9,12 +9,24 @@ import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider } from "./providers/types.ts";
+import { markdownStream } from "./markdown.ts";
 import { renderChanges } from "./render.ts";
 import { toolsFor } from "./tools/index.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
+
+// Styled Markdown on a terminal, raw text when piped.
+const md = process.stdout.isTTY ? markdownStream((s) => process.stdout.write(s)) : undefined;
+
+// Bash calls show the model's plain-language description, not the command. The command still shows
+// in permission prompts and when it fails.
+const bashInput = (input: unknown) => input as { command?: string; description?: string };
+const describe = (input: unknown) => {
+  const { command, description } = bashInput(input);
+  return description?.trim() || `$ ${command?.split("\n")[0]}`;
+};
 
 // One line that redraws in place with elapsed seconds, for waits with no streamed output (compaction).
 const spinner = (() => {
@@ -116,7 +128,7 @@ if (!yolo) {
       return ask("apply?");
     }
     if (e.tool !== "bash") return;
-    console.log(`${cyan("$")} ${(e.input as { command?: string }).command ?? JSON.stringify(e.input)}`);
+    console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
     return ask("run?");
   });
 }
@@ -144,28 +156,30 @@ const agent = new Agent({
         },
       ]
     : undefined,
-  onText: (d) => process.stdout.write(d),
+  onText: (d) => (md ? md.push(d) : process.stdout.write(d)),
   onReasoning: (s) => console.log(dim(`\x1b[3m✻ ${s}\x1b[23m`)),
   onToolStart: (name, input, changes) => {
-    const args = input as { command?: string; path?: string };
+    const args = input as { path?: string };
     // Without --yolo the permission hook already printed the diff or command.
     if (changes) yolo && console.log(renderChanges(changes));
-    else if (name === "bash") yolo && console.log(`${cyan("$")} ${args.command}`);
+    else if (name === "bash") yolo && console.log(`${cyan("⏺")} ${describe(input)}`);
     else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
     else console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input).slice(0, 120)})`);
   },
-  // Keep successful output short: the model reads the full result, the user sees a glimpse.
-  // Failures show more, since that's what the user needs to see.
-  onToolEnd: (output, ok, changes, name) => {
-    if (ok && changes) return; // the diff says it all
+  // The model reads the full result. The user sees a glimpse on success (nothing for bash) and more on
+  // failure, since that's what they need to see.
+  onToolEnd: (output, ok, changes, name, input) => {
+    if (ok && (changes || name === "bash")) return;
     const lines = output.trimEnd().split("\n");
     if (ok && name === "read_file") return console.log(dim(`  ⎿ ${lines.length} lines`));
+    if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
     const max = ok ? 4 : 12;
     const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
     const more = lines.length > max ? `\n  … ${lines.length - max} more lines` : "";
     console.log(ok ? dim(shown + more) : red(shown + more));
   },
   onStep: ({ ms, firstTokenMs, usage }) => {
+    md?.end();
     const u = usage as { inputTokens?: number; outputTokens?: number; cachedTokens?: number };
     const ttft = firstTokenMs ? `ttft ${(firstTokenMs / 1000).toFixed(1)}s · ` : "";
     const used = u.inputTokens != null ? ` · ${Math.round((100 * (u.inputTokens + (u.outputTokens ?? 0))) / agent.contextWindow)}% context` : "";
@@ -184,6 +198,40 @@ const agent = new Agent({
 
 await hooks.emit({ type: "SessionStart", sessionId, cwd });
 
+// Bracketed paste. The terminal wraps pasted text in markers (readline reports them as paste-start and
+// paste-end keypresses), so newlines inside a paste don't submit. Enter after the paste does.
+// A trailing backslash continues the prompt on the next line.
+let pasting = false;
+if (process.stdin.isTTY) {
+  process.stdout.write("\x1b[?2004h");
+  process.on("exit", () => process.stdout.write("\x1b[?2004l"));
+  process.stdin.on("keypress", (_s, key?: { name?: string }) => {
+    if (key?.name === "paste-start") pasting = true;
+    if (key?.name === "paste-end") pasting = false;
+  });
+}
+
+function readPrompt(): Promise<string> {
+  return new Promise((resolve) => {
+    const lines: string[] = [];
+    const onLine = (line: string) => {
+      if (pasting) return void lines.push(line);
+      if (line.endsWith("\\")) {
+        lines.push(line.slice(0, -1));
+        rl.setPrompt(dim("… "));
+        return rl.prompt();
+      }
+      lines.push(line);
+      rl.off("line", onLine);
+      resolve(lines.join("\n"));
+    };
+    rl.on("line", onLine);
+    process.stdout.write("\n");
+    rl.setPrompt(`${cyan("›")} `);
+    rl.prompt();
+  });
+}
+
 async function turn(prompt: string) {
   const controller = new AbortController();
   const onSigint = () => controller.abort();
@@ -195,6 +243,7 @@ async function turn(prompt: string) {
   } catch (err) {
     console.error(red(String(err)));
   } finally {
+    md?.end();
     process.off("SIGINT", onSigint);
   }
 }
@@ -205,13 +254,13 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/compact summarizes the conversation, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${provider.model} · ${cwd}\n${loaded}\n/compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);
   });
   while (true) {
-    const prompt = (await rl.question(`\n${cyan("›")} `)).trim();
+    const prompt = (await readPrompt()).trim();
     if (prompt) await turn(prompt);
   }
 }
