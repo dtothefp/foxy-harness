@@ -38,6 +38,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 |---|---|
 | `HARNESS_PROVIDER` | `codex`, `bedrock` or `anthropic`. Same as `--provider`. |
 | `HARNESS_MODEL` | Same as `--model`. |
+| `HARNESS_YOLO=1` | Skip permission prompts. Same as `--yolo`. |
 | `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
 | `ANTHROPIC_MODEL` | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`. |
 | `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | What each alias maps to. Required on Bedrock (model id or inference profile ARN). |
@@ -52,7 +53,7 @@ Without `--provider`, the harness picks Bedrock if `CLAUDE_CODE_USE_BEDROCK=1`, 
 
 Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gateways are.
 
-Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
+Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` (or `HARNESS_YOLO=1`) skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
 
 Each session's messages save to `~/.fox-harness/sessions/<id>.json` after every step.
 

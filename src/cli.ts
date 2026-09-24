@@ -24,9 +24,11 @@ const option = (name: string) => {
   return i >= 0 ? args.splice(i, 2)[1] : undefined;
 };
 
-const yolo = flag("--yolo");
+const yoloFlag = flag("--yolo");
 const demoUnknownTool = flag("--demo-unknown-tool");
 const config = await loadConfig();
+// Skip permission prompts. HARNESS_YOLO=1 makes it the default, like Claude Code's bypassPermissions mode.
+const yolo = yoloFlag || config.get("HARNESS_YOLO") === "1";
 const modelArg = option("--model") ?? config.get("HARNESS_MODEL");
 // codex | bedrock | anthropic. Without a flag: Bedrock if Claude Code is set up for it, the Anthropic API
 // if a Claude model was asked for, else Codex over the ChatGPT login.
