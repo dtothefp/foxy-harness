@@ -21,6 +21,7 @@ export const readFileTool: Tool = {
       additionalProperties: false,
     },
   },
+  hint: "read files with line numbers. Prefer it over cat, head or sed.",
 
   async run(input, { cwd }) {
     const { path, offset = 1, limit = DEFAULT_LIMIT } = input as { path?: unknown; offset?: number; limit?: number };

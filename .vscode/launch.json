@@ -33,6 +33,27 @@
       "stopOnEntry": false
     },
     {
+      // Watch an edit land as a red/green diff. Codex uses apply_patch.
+      // Set a breakpoint in runTool on `tool.plan(...)` to see the planned FileChange[].
+      "name": "Debug: edit demo (Codex, apply_patch)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      // Same demo on Claude, which uses edit_file. Needs ANTHROPIC_API_KEY (Bun loads app/.env automatically).
+      "name": "Debug: edit demo (Claude, edit_file)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/cli.ts",
+      "args": ["--yolo", "--model", "sonnet", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
       // Interactive REPL. First run `bun run debug` in the terminal, then start this.
       "name": "Debug: attach to REPL (bun run debug)",
       "type": "bun",

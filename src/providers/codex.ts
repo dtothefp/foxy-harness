@@ -1,4 +1,5 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
+import { sseEvents } from "./sse.ts";
 import type { Completion, CompletionRequest, Message, Provider, ToolCall } from "./types.ts";
 
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
@@ -72,52 +73,36 @@ function toInput(messages: Message[]): unknown[] {
 async function readStream(res: Response, onText?: (d: string) => void): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
-  const dec = new TextDecoder();
-  let buf = "";
 
-  for await (const chunk of res.body!) {
-    buf += dec.decode(chunk, { stream: true });
-    let i: number;
-    while ((i = buf.indexOf("\n\n")) >= 0) {
-      const frame = buf.slice(0, i);
-      buf = buf.slice(i + 2);
-      const data = frame
-        .split("\n")
-        .filter((l) => l.startsWith("data:"))
-        .map((l) => l.slice(5).trim())
-        .join("\n");
-      if (!data || data === "[DONE]") continue;
-      const ev = JSON.parse(data);
-
-      switch (ev.type) {
-        case "response.output_text.delta":
-          out.firstTokenMs ??= performance.now() - started;
-          out.text += ev.delta;
-          onText?.(ev.delta);
-          break;
-        case "response.output_item.done": {
-          out.firstTokenMs ??= performance.now() - started;
-          out.raw.push(ev.item);
-          if (ev.item.type === "function_call") out.toolCalls.push(parseCall(ev.item));
-          break;
-        }
-        case "response.completed":
-        case "response.done":
-        case "response.incomplete": {
-          const u = ev.response?.usage;
-          if (u) {
-            out.usage = {
-              inputTokens: u.input_tokens,
-              outputTokens: u.output_tokens,
-              cachedTokens: u.input_tokens_details?.cached_tokens,
-            };
-          }
-          break;
-        }
-        case "error":
-        case "response.failed":
-          throw new Error(`codex stream error: ${JSON.stringify(ev.error ?? ev.response?.error ?? ev)}`);
+  for await (const ev of sseEvents(res)) {
+    switch (ev.type) {
+      case "response.output_text.delta":
+        out.firstTokenMs ??= performance.now() - started;
+        out.text += ev.delta;
+        onText?.(ev.delta);
+        break;
+      case "response.output_item.done": {
+        out.firstTokenMs ??= performance.now() - started;
+        out.raw.push(ev.item);
+        if (ev.item.type === "function_call") out.toolCalls.push(parseCall(ev.item));
+        break;
       }
+      case "response.completed":
+      case "response.done":
+      case "response.incomplete": {
+        const u = ev.response?.usage;
+        if (u) {
+          out.usage = {
+            inputTokens: u.input_tokens,
+            outputTokens: u.output_tokens,
+            cachedTokens: u.input_tokens_details?.cached_tokens,
+          };
+        }
+        break;
+      }
+      case "error":
+      case "response.failed":
+        throw new Error(`codex stream error: ${JSON.stringify(ev.error ?? ev.response?.error ?? ev)}`);
     }
   }
   return out;

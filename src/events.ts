@@ -1,3 +1,5 @@
+import type { FileChange } from "./tools/types.ts";
+
 // Lifecycle events, named after the Claude Code hooks model:
 // SessionStart → UserPromptSubmit → [PreToolUse → tool → PostToolUse]* → Stop → SessionEnd
 // Handlers are in-process functions. Nothing runs unless something is registered.
@@ -5,7 +7,8 @@
 export type HarnessEvent =
   | { type: "SessionStart"; sessionId: string; cwd: string }
   | { type: "UserPromptSubmit"; prompt: string }
-  | { type: "PreToolUse"; tool: string; input: unknown; callId: string }
+  // `changes` is set for edit tools: the planned file writes, so a hook can show the diff before approving.
+  | { type: "PreToolUse"; tool: string; input: unknown; callId: string; changes?: FileChange[] }
   | { type: "PostToolUse"; tool: string; input: unknown; output: string; ok: boolean }
   | { type: "Stop"; reason: "end_turn" | "max_steps" | "interrupted" | "error"; error?: string }
   | { type: "SessionEnd"; sessionId: string };

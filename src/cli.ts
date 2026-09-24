@@ -3,7 +3,10 @@ import { createInterface } from "node:readline/promises";
 import { Agent, buildSystemPrompt } from "./agent.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { Hooks } from "./events.ts";
+import { anthropicProvider, CLAUDE_ALIASES } from "./providers/anthropic.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
+import { renderChanges } from "./render.ts";
+import { toolsFor } from "./tools/index.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
@@ -21,7 +24,8 @@ const option = (name: string) => {
 
 const yolo = flag("--yolo");
 const demoUnknownTool = flag("--demo-unknown-tool");
-const model = option("--model") ?? process.env.HARNESS_MODEL ?? "gpt-5.5";
+const requested = option("--model") ?? process.env.HARNESS_MODEL ?? "gpt-5.5";
+const model = CLAUDE_ALIASES[requested] ?? requested;
 
 if (args[0] === "login") {
   await login();
@@ -36,24 +40,36 @@ const cwd = process.cwd();
 const sessionId = crypto.randomUUID();
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const hooks = new Hooks();
+const provider = model.startsWith("claude") ? anthropicProvider(model) : codexProvider(model, sessionId);
+const tools = toolsFor(provider.name);
 
-// Built-in permission hook: confirm every bash command unless --yolo. read_file is read-only, so it's allowed.
+async function ask(question: string) {
+  const answer = (await rl.question(dim(`${question} [Y/n/reason] `))).trim();
+  if (answer === "" || /^y(es)?$/i.test(answer)) return;
+  return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
+}
+
+// Built-in permission hook, skipped with --yolo. Edits show their diff first, bash shows the command.
+// read_file is read-only, so it's always allowed.
 if (!yolo) {
   hooks.on("PreToolUse", async (e) => {
+    if (e.changes) {
+      console.log(renderChanges(e.changes));
+      return ask("apply?");
+    }
     if (e.tool !== "bash") return;
-    const cmd = (e.input as { command?: string }).command ?? JSON.stringify(e.input);
-    const answer = (await rl.question(`${cyan("$")} ${cmd}\n${dim("run? [Y/n/reason] ")}`)).trim();
-    if (answer === "" || /^y(es)?$/i.test(answer)) return;
-    return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
+    console.log(`${cyan("$")} ${(e.input as { command?: string }).command ?? JSON.stringify(e.input)}`);
+    return ask("run?");
   });
 }
 
 const agent = new Agent({
-  provider: codexProvider(model, sessionId),
+  provider,
+  tools,
   hooks,
   cwd,
   sessionId,
-  system: await buildSystemPrompt(cwd),
+  system: await buildSystemPrompt(cwd, tools),
   // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
   fakeTools: demoUnknownTool
     ? [
@@ -70,11 +86,16 @@ const agent = new Agent({
       ]
     : undefined,
   onText: (d) => process.stdout.write(d),
-  onToolStart: (name, input) => {
-    if (name !== "bash") console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input)})`);
-    else if (yolo) console.log(`${cyan("$")} ${(input as { command?: string }).command}`);
+  onToolStart: (name, input, changes) => {
+    const args = input as { command?: string; path?: string };
+    // Without --yolo the permission hook already printed the diff or command.
+    if (changes) yolo && console.log(renderChanges(changes));
+    else if (name === "bash") yolo && console.log(`${cyan("$")} ${args.command}`);
+    else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
+    else console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input).slice(0, 120)})`);
   },
-  onToolEnd: (output, ok) => {
+  onToolEnd: (output, ok, changes) => {
+    if (ok && changes) return; // the diff says it all
     const lines = output.trimEnd().split("\n");
     const shown = lines.slice(0, 12).join("\n");
     const more = lines.length > 12 ? `\n… ${lines.length - 12} more lines` : "";

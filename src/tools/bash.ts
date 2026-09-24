@@ -20,6 +20,7 @@ export const bashTool: Tool = {
       additionalProperties: false,
     },
   },
+  hint: "everything else (search, tests, git, builds). Each call runs in a fresh shell, so cd and exported env vars don't persist; prefix commands with `cd dir &&` when needed.",
 
   async run(input, { cwd, signal }) {
     const { command, timeout_s } = input as { command?: unknown; timeout_s?: number };

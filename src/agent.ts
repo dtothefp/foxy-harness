@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
 import type { Hooks } from "./events.ts";
 import type { Message, Provider, ToolSpec } from "./providers/types.ts";
-import { TOOLS } from "./tools/index.ts";
+import { applyChanges } from "./tools/changes.ts";
+import type { FileChange, Tool, ToolResult } from "./tools/types.ts";
 
 // The whole agent: call the model, run any tool calls, feed results back, repeat
 // until the model answers without calling a tool. Trajectory is saved every step.
@@ -14,12 +15,13 @@ export type AgentOptions = {
   cwd: string;
   sessionId: string;
   system: string;
+  tools: Tool[];
   maxSteps?: number;
   // Advertised to the model but with no implementation. Used to demo the unknown-tool path.
   fakeTools?: ToolSpec[];
   onText?: (delta: string) => void;
-  onToolStart?: (name: string, input: unknown) => void;
-  onToolEnd?: (output: string, ok: boolean) => void;
+  onToolStart?: (name: string, input: unknown, changes?: FileChange[]) => void;
+  onToolEnd?: (output: string, ok: boolean, changes?: FileChange[]) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
 };
 
@@ -40,7 +42,7 @@ export class Agent {
         const res = await provider.complete({
           system: this.opts.system,
           messages: this.messages,
-          tools: [...TOOLS.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
+          tools: [...this.opts.tools.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
           signal,
           onText: this.opts.onText,
         });
@@ -70,17 +72,39 @@ export class Agent {
 
   private async runTool(callId: string, name: string, input: unknown, signal?: AbortSignal): Promise<string> {
     const { hooks, cwd } = this.opts;
-    const denied = await hooks.emit({ type: "PreToolUse", tool: name, input, callId });
+    const args = input as Record<string, unknown>;
+    const ctx = { cwd, signal };
+    const tool = this.opts.tools.find((t) => t.spec.name === name);
+    if (!tool) return this.finish(name, input, { output: `Unknown tool: ${name}`, ok: false });
+
+    // Edit tools plan first, so hooks and the UI can show the diff before anything is written.
+    let changes: FileChange[] | undefined;
+    if ("plan" in tool) {
+      try {
+        changes = await tool.plan(args, ctx);
+      } catch (err) {
+        return this.finish(name, input, { output: errorText(err), ok: false });
+      }
+    }
+
+    const denied = await hooks.emit({ type: "PreToolUse", tool: name, input, callId, changes });
     if (denied) return `Tool call denied by user: ${denied.block}`;
 
-    this.opts.onToolStart?.(name, input);
-    const tool = TOOLS.find((t) => t.spec.name === name);
-    const { output, ok } = tool
-      ? await tool.run(input as Record<string, unknown>, { cwd, signal })
-      : { output: `Unknown tool: ${name}`, ok: false };
-    this.opts.onToolEnd?.(output, ok);
-    await hooks.emit({ type: "PostToolUse", tool: name, input, output, ok });
-    return output;
+    this.opts.onToolStart?.(name, input, changes);
+    let result: ToolResult;
+    try {
+      result = "plan" in tool ? { output: await applyChanges(changes!, cwd), ok: true } : await tool.run(args, ctx);
+    } catch (err) {
+      result = { output: errorText(err), ok: false };
+    }
+    return this.finish(name, input, result, changes, true);
+  }
+
+  private async finish(name: string, input: unknown, r: ToolResult, changes?: FileChange[], started = false) {
+    if (!started) this.opts.onToolStart?.(name, input);
+    this.opts.onToolEnd?.(r.output, r.ok, changes);
+    await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok });
+    return r.output;
   }
 
   private async save() {
@@ -93,16 +117,17 @@ export class Agent {
   }
 }
 
-export async function buildSystemPrompt(cwd: string): Promise<string> {
+export async function buildSystemPrompt(cwd: string, tools: Tool[]): Promise<string> {
   let prompt = `You are fox-harness, a coding agent running in the user's terminal.
 Working directory: ${cwd}
 Platform: ${process.platform}
 
 Tools:
-- read_file: read files (with line numbers). Prefer it over cat/head/sed for reading.
-- bash: everything else. Each call runs in a fresh shell, so cd and exported env vars do not persist; prefix commands with \`cd dir &&\` when needed.
+${tools.map((t) => `- ${t.spec.name}: ${t.hint}`).join("\n")}
+
+Guidelines:
 - Explore before editing. Prefer rg and fd if installed.
-- Edit files with small targeted changes (heredocs, sed, or a short python/bun script). Never rewrite a whole file just to change a few lines.
+- Read a file before editing it. Make small targeted edits, never rewrite a whole file to change a few lines.
 - Run the project's tests or typecheck after changes when they exist.
 - Be concise. When the task is done, reply with a short summary and no tool call.`;
 
@@ -114,4 +139,8 @@ Tools:
     }
   }
   return prompt;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
