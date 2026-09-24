@@ -68,14 +68,59 @@ function block(raw: string): string {
   let m: RegExpMatchArray | null;
   if ((m = raw.match(/^(#{1,6})\s+(.*?)\s*#*$/))) {
     const text = inline(m[2]!.replace(/\*\*/g, "")); // headings are bold already
-    return m[1]!.length <= 2 ? `${HEADING}${UNDERLINE}${text}${RESET}` : `${HEADING}${text}${RESET}`;
+    const style = m[1]!.length <= 2 ? `${HEADING}${UNDERLINE}` : HEADING;
+    return `${style}${wrap(text, 0)}${RESET}`;
   }
-  if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(raw)) return `${DIM}${"─".repeat(Math.min(process.stdout.columns || 80, 60))}${RESET}`;
-  if ((m = raw.match(/^\s*>\s?(.*)/))) return `${DIM}│${RESET} ${ITALIC}${inline(m[1]!)}${RESET}`;
-  if ((m = raw.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)/))) return `${m[1]}${m[2] === " " ? "☐" : "☑"} ${inline(m[3]!)}`;
-  if ((m = raw.match(/^(\s*)[-*+]\s+(.*)/))) return `${m[1]}${DIM}•${RESET} ${inline(m[2]!)}`;
-  if ((m = raw.match(/^(\s*)(\d+[.)])\s+(.*)/))) return `${m[1]}${DIM}${m[2]}${RESET} ${inline(m[3]!)}`;
-  return inline(raw);
+  if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(raw)) return `${DIM}${"─".repeat(Math.min(columns(), 60))}${RESET}`;
+  if ((m = raw.match(/^\s*>\s?(.*)/))) return `${DIM}│${RESET} ${ITALIC}${wrap(inline(m[1]!), 2, `${DIM}│${RESET} ${ITALIC}`)}${RESET}`;
+  if ((m = raw.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)/))) return `${m[1]}${m[2] === " " ? "☐" : "☑"} ${wrap(inline(m[3]!), m[1]!.length + 2)}`;
+  if ((m = raw.match(/^(\s*)[-*+]\s+(.*)/))) return `${m[1]}${DIM}•${RESET} ${wrap(inline(m[2]!), m[1]!.length + 2)}`;
+  if ((m = raw.match(/^(\s*)(\d+[.)])\s+(.*)/))) return `${m[1]}${DIM}${m[2]}${RESET} ${wrap(inline(m[3]!), m[1]!.length + m[2]!.length + 1)}`;
+  const lead = raw.match(/^\s*/)![0].length;
+  return " ".repeat(lead) + wrap(inline(raw.slice(lead)), lead);
+}
+
+const columns = () => process.stdout.columns || 80;
+const visible = (s: string) => s.replace(ANSI, "").length;
+
+// Word wrap at the terminal width, so the terminal never breaks a word in half. `indent` is how far
+// the text already sits from the left edge. Wrapped lines start there too, which lines a list item's
+// second line up under its text instead of under the bullet. `prefix` repeats a quote bar.
+function wrap(text: string, indent: number, prefix = " ".repeat(indent)): string {
+  const width = Math.max(columns() - 1 - indent, 20);
+  const lines: string[] = [];
+  let line = "";
+  let len = 0;
+  for (const word of text.split(/ +/)) {
+    const w = visible(word);
+    if (len && len + 1 + w <= width) {
+      line += ` ${word}`;
+      len += 1 + w;
+      continue;
+    }
+    if (len) lines.push(line);
+    // A word wider than the line (a long path or URL) is cut into pieces.
+    const pieces = w > width ? split(word, width) : [word];
+    lines.push(...pieces.slice(0, -1));
+    line = pieces.at(-1)!;
+    len = visible(line);
+  }
+  lines.push(line);
+  return lines.join(`\n${prefix}`);
+}
+
+function split(word: string, width: number): string[] {
+  const out = [""];
+  let len = 0;
+  for (const [tok] of word.matchAll(/\x1b\[[0-9;]*m|./gsu)) {
+    if (!tok.startsWith("\x1b") && len === width) {
+      out.push("");
+      len = 0;
+    }
+    out[out.length - 1] += tok;
+    if (!tok.startsWith("\x1b")) len++;
+  }
+  return out;
 }
 
 // Code spans first, so nothing inside backticks gets styled. Underscore italics are skipped
