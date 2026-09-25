@@ -18,6 +18,9 @@ export type Message =
 
 export type ToolSpec = { name: string; description: string; parameters: object };
 
+// A tool the backend runs itself (web search), reported after the fact so the frontends can show it.
+export type ServerToolCall = { id: string; name: string; input: unknown; output: string; ok: boolean };
+
 // thinkingTokens is the part of outputTokens spent reasoning, where the backend reports it.
 export type Usage = { inputTokens?: number; outputTokens?: number; cachedTokens?: number; thinkingTokens?: number };
 
@@ -29,6 +32,7 @@ export type CompletionRequest = {
   onText?: (delta: string) => void;
   // One short line per reasoning step (a summary heading), for models that expose one.
   onReasoning?: (summary: string) => void;
+  onServerTool?: (call: ServerToolCall) => void;
 };
 
 export type Completion = {
@@ -37,6 +41,8 @@ export type Completion = {
   raw: unknown[];
   usage: Usage;
   firstTokenMs?: number;
+  // The backend's reason for ending the response, e.g. "end_turn", "max_tokens", "pause_turn".
+  stopReason?: string;
 };
 
 export interface Provider {
@@ -45,6 +51,8 @@ export interface Provider {
   contextWindow: number;
   // What the request asks for, e.g. { effort: "high", thinking: "adaptive, summarized" }. Saved with the session.
   settings: Record<string, string>;
+  // Tools the backend runs on its side, added to every request. The harness leaves out its own version of these.
+  hostedTools: { name: string; hint: string }[];
   complete(req: CompletionRequest): Promise<Completion>;
   // Server-side compaction, where the backend has it. Returns undefined when it isn't available,
   // and the agent falls back to its own summary (src/compact.ts).

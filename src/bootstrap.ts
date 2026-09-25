@@ -53,8 +53,9 @@ export function makeProvider(config: Config, { provider, model }: ProviderChoice
   return claudeProvider(provider, resolveClaudeModel(name, provider, config), config);
 }
 
-// Edits show their diff and bash its command before running. read_file is read-only, so it's always allowed.
-const needsPermission = (e: PreToolUse) => !!e.changes || e.tool === "bash";
+// Edits show their diff, bash its command and web_fetch its URL before running (a fetch can send data out).
+// read_file and web_search are read-only, so they're always allowed.
+const needsPermission = (e: PreToolUse) => !!e.changes || e.tool === "bash" || e.tool === "web_fetch";
 
 export type SessionOptions = {
   config: Config;
@@ -75,7 +76,7 @@ export async function startSession(o: SessionOptions) {
   // /model swaps the model within the session's provider.
   const providerFor = (model = o.choice.model) => makeProvider(config, { ...o.choice, model }, sessionId);
   const provider = providerFor();
-  const tools = toolsFor(provider.name);
+  const tools = toolsFor(provider.name, provider.hostedTools.map((t) => t.name));
   // Command hooks from settings.json run before the permission prompt, so one can deny a call first.
   registerCommandHooks(hooks, await loadCommandHooks(cwd), sessionId, cwd);
   const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
@@ -96,7 +97,7 @@ export async function startSession(o: SessionOptions) {
     hooks,
     cwd,
     sessionId,
-    system: buildSystemPrompt(cwd, tools, instructions, skills),
+    system: buildSystemPrompt(cwd, tools, instructions, skills, provider.hostedTools),
     contextWindow: Number(config.get("HARNESS_CONTEXT_WINDOW")) || undefined,
     maxSteps: Number(config.get("HARNESS_MAX_STEPS")) || undefined,
     fakeTools: o.fakeTools,
