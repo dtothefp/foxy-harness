@@ -1,23 +1,18 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { Agent, buildSystemPrompt } from "./agent.ts";
 import { login } from "./auth/codex-oauth.ts";
-import { loadCommandHooks, registerCommandHooks } from "./command-hooks.ts";
-import { Hooks } from "./events.ts";
+import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
-import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
 import { attachmentsInPrompt } from "./attachments.ts";
 import { ago, describeSession, shortModel } from "./inspect.ts";
-import { findSession, loadSession, providerFamily, type Session, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
-import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
-import { codexProvider, listModels } from "./providers/codex.ts";
-import type { Provider, Usage } from "./providers/types.ts";
+import { findSession, loadSession, type Session, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
+import { listModels } from "./providers/codex.ts";
+import type { Usage } from "./providers/types.ts";
 import { keyInput } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
 import { createSpinner } from "./spinner.ts";
 import { renderChanges } from "./render.ts";
-import { toolsFor } from "./tools/index.ts";
 import type { FileChange } from "./tools/types.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -94,31 +89,9 @@ if (args[0] === "last") {
 const cwd = process.cwd();
 const input = keyInput(process.stdin);
 const rl = createInterface({ input, output: process.stdout, terminal: process.stdin.isTTY });
-const hooks = new Hooks();
 
 const resumed = await resumeTarget();
 const sessionId = resumed?.id ?? sessionIdArg ?? crypto.randomUUID();
-
-let modelArg = modelFlag ?? config.get("HARNESS_MODEL");
-// codex | bedrock | anthropic. Without a flag: Bedrock if Claude Code is set up for it, the Anthropic API
-// if a Claude model was asked for, else Codex over the ChatGPT login.
-let providerName =
-  providerFlag ??
-  config.get("HARNESS_PROVIDER") ??
-  (config.get("CLAUDE_CODE_USE_BEDROCK") === "1"
-    ? "bedrock"
-    : /^(claude|opus|sonnet|haiku|arn:)/i.test(modelArg ?? "")
-      ? "anthropic"
-      : "codex");
-// A resumed session keeps its provider and model unless flags say otherwise.
-if (resumed) {
-  const { provider: saved, model } = resumed.session;
-  if (providerFamily(saved, model) !== providerFamily(providerName)) {
-    if (providerFlag) exit(`That session ran on ${saved ?? "codex"}. Its history can't move to ${providerName}.`);
-    providerName = saved ?? "codex";
-  }
-  if (!modelFlag && (!saved || saved === providerName)) modelArg = model;
-}
 
 function exit(message: string): never {
   console.error(red(message));
@@ -159,50 +132,13 @@ async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Da
   return pick;
 }
 
-function makeProvider(model = modelArg): Provider {
-  if (providerName === "codex") return codexProvider(model ?? "gpt-5.5", sessionId, config.get("HARNESS_EFFORT"));
-  if (providerName !== "bedrock" && providerName !== "anthropic") {
-    throw new Error(`Unknown provider "${providerName}". Use codex, bedrock or anthropic.`);
-  }
-  const name = model ?? config.get("ANTHROPIC_MODEL") ?? config.model ?? "sonnet";
-  return claudeProvider(providerName, resolveClaudeModel(name, providerName, config), config);
-}
-
-let provider: Provider;
-try {
-  provider = makeProvider();
-} catch (err) {
-  exit(err instanceof Error ? err.message : String(err));
-}
-const tools = toolsFor(provider.name);
-// Command hooks from settings.json run before the built-in permission prompt, so one can deny a call first.
-registerCommandHooks(hooks, await loadCommandHooks(cwd), sessionId, cwd);
-const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
-watchPackages(hooks, cwd, { instructions, skills }, (what) => console.log(dim(`⏺ Loaded ${what}`)));
-
 // The running turn. ctrl+c aborts it, which also cancels a permission question it's waiting on.
 let current: AbortController | undefined;
 
-async function ask(question: string, tool: string) {
-  spinner.waiting();
-  await hooks.emit({ type: "Notification", message: `foxy-harness needs your permission to use ${tool}`, notificationType: "permission_prompt" });
+async function ask(question: string) {
   const answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
   if (answer === "" || /^y(es)?$/i.test(answer)) return;
   return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
-}
-
-// Built-in permission hook, skipped with --yolo. Edits show their diff first, bash shows the command.
-// read_file is read-only, so it's always allowed.
-if (!yolo) {
-  hooks.on("PreToolUse", async (e) => {
-    if (e.changes) {
-      console.log(renderChanges(e.changes));
-      return ask("apply?", e.tool);
-    }
-    if (e.tool !== "bash") return;
-    console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
-    return ask("run?", e.tool);
-  });
 }
 
 // The model reads the full tool result. The user sees a glimpse on success (nothing for bash) and more on
@@ -218,36 +154,23 @@ function showToolEnd(output: string, ok: boolean, changes: FileChange[] | undefi
   console.log(ok ? dim(shown + more) : red(shown + more));
 }
 
-const agent = new Agent({
-  provider,
-  tools,
-  hooks,
-  cwd,
-  sessionId,
-  system: buildSystemPrompt(cwd, tools, instructions, skills),
-  contextWindow: Number(config.get("HARNESS_CONTEXT_WINDOW")) || undefined,
-  maxSteps: Number(config.get("HARNESS_MAX_STEPS")) || undefined,
-  // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
-  fakeTools: demoUnknownTool
-    ? [
-        {
-          name: "web_search",
-          description: "Search the web and return the top results.",
-          parameters: {
-            type: "object",
-            properties: { query: { type: "string" } },
-            required: ["query"],
-            additionalProperties: false,
-          },
-        },
-      ]
-    : undefined,
+const frontend: Frontend = {
+  // Without --yolo, edits show their diff and bash its command, then ask.
+  askPermission: yolo
+    ? undefined
+    : async (e) => {
+        spinner.waiting();
+        if (e.changes) console.log(renderChanges(e.changes));
+        else console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
+        return ask(e.changes ? "apply?" : "run?");
+      },
+  notice: (line) => console.log(dim(`⏺ ${line}`)),
   onText: (d) => (md ? md.push(d) : process.stdout.write(d)),
   onReasoning: (s) => console.log(dim(`\x1b[3m✻ ${s}\x1b[23m`)),
   onToolStart: (name, input, changes) => {
     spinner.busy("Running", 5000);
     const args = input as { path?: string };
-    // Without --yolo the permission hook already printed the diff or command.
+    // Without --yolo the permission prompt already printed the diff or command.
     if (changes) yolo && console.log(renderChanges(changes));
     else if (name === "bash") yolo && console.log(`${cyan("⏺")} ${describe(input)}`);
     else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
@@ -274,7 +197,38 @@ const agent = new Agent({
     else console.log(dim(`⏺ Compacted conversation, ${info.native ? "server-side" : "summary"}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`));
     spinner.busy("Thinking");
   },
-});
+};
+
+let session: Awaited<ReturnType<typeof startSession>>;
+try {
+  session = await startSession({
+    config,
+    cwd,
+    sessionId,
+    choice: chooseProvider(config, { provider: providerFlag, model: modelFlag }, resumed?.session),
+    frontend,
+    resumed: resumed?.session,
+    // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
+    fakeTools: demoUnknownTool
+      ? [
+          {
+            name: "web_search",
+            description: "Search the web and return the top results.",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+              additionalProperties: false,
+            },
+          },
+        ]
+      : undefined,
+  });
+} catch (err) {
+  exit(err instanceof Error ? err.message : String(err));
+}
+const { agent, hooks, instructions, skills, providerFor } = session;
+const provider = agent.provider;
 
 // A turn cut off by HARNESS_MAX_STEPS would otherwise look finished.
 hooks.on("Stop", (e) => {
@@ -283,9 +237,6 @@ hooks.on("Stop", (e) => {
   const n = Number(config.get("HARNESS_MAX_STEPS"));
   console.log(red(`⏺ Stopped after ${n} step${n === 1 ? "" : "s"} (HARNESS_MAX_STEPS). Say "continue" to keep going.`));
 });
-
-if (resumed) agent.restore(resumed.session.messages);
-await hooks.emit({ type: "SessionStart", sessionId, cwd, source: resumed ? "resume" : "startup" });
 
 // Bracketed paste. The terminal wraps pasted text in markers (readline reports them as paste-start and
 // paste-end keypresses), so newlines inside a paste don't submit. Enter after the paste does.
@@ -328,7 +279,7 @@ async function turn(prompt: string) {
   try {
     if (prompt === "/model" || prompt.startsWith("/model ")) {
       const name = prompt.slice("/model".length).trim();
-      if (name) agent.provider = makeProvider(name);
+      if (name) agent.provider = providerFor(name);
       console.log(dim(`⏺ ${name ? "Switched to" : "Using"} ${shortModel(agent.provider.model)} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`));
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
