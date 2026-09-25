@@ -1,31 +1,12 @@
-import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { HARNESS_HOME } from "./auth/codex-oauth.ts";
-import type { Message, Usage } from "./providers/types.ts";
+import type { Usage } from "./providers/types.ts";
+import type { Session } from "./sessions.ts";
 
 // A plain-text summary of a session, short enough to read off a photo of the screen: provider, settings,
 // and per step what the model sent back (thinking shown or hidden, text, tool calls) with token counts.
 // `foxy-harness last` prints the newest session file, `/session` the current one.
 
-export type Session = {
-  provider?: string;
-  model: string;
-  settings?: Record<string, string>;
-  cwd: string;
-  messages: Message[];
-};
-
 type Item = Record<string, any>;
-
-const SESSIONS = join(HARNESS_HOME, "sessions");
-
-// Newest session file, or the one whose id starts with `prefix`.
-export async function findSession(prefix?: string): Promise<{ id: string; path: string; mtime: Date } | undefined> {
-  const names = (await readdir(SESSIONS).catch(() => [])).filter((n) => n.endsWith(".json") && n.startsWith(prefix ?? ""));
-  const files = await Promise.all(names.map(async (n) => ({ id: n.slice(0, -5), path: join(SESSIONS, n), mtime: (await stat(join(SESSIONS, n))).mtime })));
-  return files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime())[0];
-}
 
 export function describeSession(s: Session, header?: string): string {
   const out: string[] = [];
@@ -102,6 +83,7 @@ function oneLine(s: string, max: number): string {
 
 export function ago(d: Date): string {
   const mins = Math.round((Date.now() - d.getTime()) / 60_000);
+  if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min ago`;
   if (mins < 48 * 60) return `${Math.round(mins / 60)} h ago`;
   return d.toLocaleDateString();

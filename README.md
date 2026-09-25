@@ -24,6 +24,10 @@ bun src/cli.ts --model sonnet         # opus, sonnet, haiku, or any claude-* id
 bun src/cli.ts --provider bedrock     # codex | bedrock | anthropic
 ```
 
+Sessions resume with Claude Code's flags. `--continue` (`-c`) picks up the newest session in the current directory. `--resume <id>` (`-r`) picks up a given one, and an id prefix is enough. `--resume` alone lists this directory's recent sessions to pick from. `--session-id <uuid>` starts a new session with that id. A resumed session keeps its provider and model and prints its last exchange. Sessions are per directory, so each git worktree has its own.
+
+Session managers like Agent of Empires, Orca and Paseo drive Claude Code and Codex through these same flags. Point one at `foxy-harness --continue` and relaunching a pane picks up where it left off.
+
 `/model <name>` switches models mid-session within the same provider (`/model gpt-5.4`, `/model opus`). `/model` alone shows the current one. `foxy-harness models` lists what your ChatGPT plan can use.
 
 `bun link` once puts a `foxy-harness` command on your PATH, so you can run it from any repo.
@@ -80,7 +84,7 @@ Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gate
 
 Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` (or `HARNESS_YOLO=1`) skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn. At the prompt it clears what's typed, and on an empty prompt it exits.
 
-Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step.
+Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step, along with the directory it ran in. The banner shows the id.
 
 ## Context and compaction
 
@@ -111,7 +115,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - Edit tools only `plan`. They return `FileChange[]` (before/after per file). The agent passes that to the PreToolUse hook for the diff prompt, then writes it with `src/tools/changes.ts`.
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.
 - `src/tools/edit-file.ts` is exact string replace for Claude (same shape as Claude Code's Edit).
-- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/spinner.ts` draws the status line for quiet stretches. `src/keys.ts` decodes modified keys like Shift+Enter before readline sees them.
+- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/sessions.ts` finds and loads saved sessions for `--continue` and `--resume`. `src/spinner.ts` draws the status line for quiet stretches. `src/keys.ts` decodes modified keys like Shift+Enter before readline sees them.
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Images and PDFs come back as attachments, office documents as text (`src/attachments.ts`).
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
