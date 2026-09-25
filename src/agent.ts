@@ -63,6 +63,13 @@ export class Agent {
     return queued;
   }
 
+  // Adds something the user did between turns (a `!` shell command and its output) to the history, so the
+  // model sees it with the next prompt.
+  async note(text: string) {
+    this.push({ role: "user", text }, text.length);
+    await this.save();
+  }
+
   get provider() {
     return this.opts.provider;
   }

@@ -8,6 +8,7 @@ import { chooseProvider, type Frontend, type PreToolUse, startSession } from "./
 import type { Config } from "./config.ts";
 import type { HookResult, Hooks } from "./events.ts";
 import type { Attachment, Message, Usage } from "./providers/types.ts";
+import { userShell } from "./shell.ts";
 import { loadSession, type Session, sessionFiles, sessionPath, sessionTitle } from "./sessions.ts";
 import type { FileChange } from "./tools/types.ts";
 
@@ -250,6 +251,12 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     "session/prompt": async ({ sessionId, prompt }) => {
       const live = get(sessionId);
       const { text, attachments } = await toPrompt(prompt ?? [], live.cwd);
+      // `!command` runs it without the model. Sent mid-turn, it runs once the turn ends.
+      if (text.startsWith("!")) {
+        await live.running?.catch(() => {});
+        live.running = runShell(live, text.slice(1).trim()).finally(() => (live.running = undefined));
+        return { stopReason: await live.running };
+      }
       // A prompt sent mid-turn steers the running turn rather than starting a second one. The model gets it at
       // the next step, and this request ends with the turn it joined.
       if (live.running) {
@@ -263,6 +270,50 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
       sessions.get(sessionId)?.current?.abort();
     },
   };
+
+  // Shown as a tool call, like the agent's own bash calls.
+  async function runShell(live: Live, command: string): Promise<string> {
+    if (!command) {
+      update(live, {
+        sessionUpdate: "agent_message_chunk",
+        messageId: crypto.randomUUID(),
+        content: { type: "text", text: "Type a command after the !, like `!git status`." },
+      });
+      return "end_turn";
+    }
+    const controller = new AbortController();
+    live.current = controller;
+    const toolCallId = crypto.randomUUID();
+    // The same card as the agent's own bash calls, titled with the command.
+    update(live, {
+      ...toolCall("bash", { command, description: command.split("\n")[0] }, undefined, toolCallId, live.cwd),
+      status: "in_progress",
+    });
+    try {
+      const r = await userShell(live.agent, command, live.cwd, controller.signal);
+      const output = r.ok ? r.output : `${r.output}\n[${r.status}]`.trim();
+      update(live, {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: r.ok ? "completed" : "failed",
+        content: toolOutput(output, r.ok, undefined, "bash", live.cwd),
+        rawOutput: { output },
+      });
+      // Clients like aoe fold a successful call to one line, but the output is what you ran it for. A failed
+      // call already shows it.
+      if (r.ok && r.output) {
+        const fence = "`".repeat(Math.max(3, ...[...r.output.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+        update(live, {
+          sessionUpdate: "agent_message_chunk",
+          messageId: crypto.randomUUID(),
+          content: { type: "text", text: `${fence}\n${r.output}\n${fence}` },
+        });
+      }
+    } finally {
+      live.current = undefined;
+    }
+    return controller.signal.aborted ? "cancelled" : "end_turn";
+  }
 
   async function runTurn(live: Live, text: string, attachments: Attachment[] | undefined): Promise<string> {
     const controller = new AbortController();
