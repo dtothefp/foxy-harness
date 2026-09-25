@@ -249,10 +249,12 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
   const blocks: Block[] = [];
   const json: string[] = [];
+  let sawStart = false;
 
   for await (const ev of events) {
     switch (ev.type) {
       case "message_start": {
+        sawStart = true;
         // input_tokens excludes cache hits. Report the total, like Codex does.
         const u = ev.message.usage ?? {};
         const cached = u.cache_read_input_tokens ?? 0;
@@ -305,6 +307,8 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
         throw new Error(`claude stream error: ${JSON.stringify(ev.error)}`);
     }
   }
+  // A gateway or proxy that answers 200 without Claude's events would otherwise look like an empty reply.
+  if (!sawStart) throw new Error("claude stream ended before message_start. The endpoint answered but sent no reply.");
   // Replayed verbatim next turn (thinking blocks need their signatures). Empty text blocks are rejected.
   out.raw = blocks.filter((b) => b && !(b.type === "text" && !b.text));
   return out;
