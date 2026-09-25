@@ -16,7 +16,7 @@ import { keyInput, onMouse } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
 import { createTui } from "./tui.ts";
 import { renderChanges } from "./render.ts";
-import { runBash } from "./tools/bash.ts";
+import { userShell } from "./shell.ts";
 import type { FileChange } from "./tools/types.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -492,19 +492,13 @@ async function turn(prompt: string) {
   }
 }
 
-// `!command` runs it in the project directory, like Claude Code's bash mode. It skips the model and the
-// permission prompt (you typed it), and the command and its output go into the history for the next prompt.
+// `!command` runs a shell command without the model. See shell.ts.
 async function shell(command: string, signal: AbortSignal) {
   if (!command) return console.log(dim("⏺ Type a command after the !, like !git status"));
   tui.busy("Running");
-  const r = await runBash(command, { cwd, signal, timeoutS: 600 });
-  const output = r.output.trimEnd();
-  if (output) console.log(output);
-  const status = r.timedOut ? "timed out" : signal.aborted ? "interrupted" : `exit ${r.exitCode}`;
-  if (r.exitCode !== 0) console.log(red(`⏺ ${status}`));
-  await agent.note(
-    `I ran a shell command myself. You can refer to it.\n<bash-input>${command}</bash-input>\n<bash-output status="${status}">\n${output}\n</bash-output>`,
-  );
+  const r = await userShell(agent, command, cwd, signal);
+  if (r.output) console.log(r.output);
+  if (!r.ok) console.log(red(`⏺ ${r.status}`));
 }
 
 // The last exchange of a resumed session, so it's clear where things left off.
