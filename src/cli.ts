@@ -2,6 +2,7 @@
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { runAcp } from "./acp.ts";
+import { setupAoe } from "./aoe.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
@@ -81,6 +82,16 @@ if (flag("--acp")) await runAcp(config, { provider: providerFlag, model: modelFl
 if (args[0] === "login") {
   await login();
   process.exit(0);
+}
+// `foxy-harness aoe` registers the harness with Agent of Empires.
+if (args[0] === "aoe") {
+  try {
+    console.log(await setupAoe());
+    process.exit(0);
+  } catch (err) {
+    console.error(red((err as Error).message));
+    process.exit(1);
+  }
 }
 if (args[0] === "models") {
   const { models } = (await listModels()) as { models: { slug: string; description?: string; visibility?: string }[] };

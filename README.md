@@ -69,7 +69,7 @@ Zed, in `settings.json`.
 { "agent_servers": { "foxy-harness": { "type": "custom", "command": "foxy-harness", "args": ["--acp"] } } }
 ```
 
-Agent of Empires, in `~/.agent-of-empires/config.toml`. The first entry is the terminal view, `agent_acp_cmd` the structured view.
+Agent of Empires. Run `foxy-harness aoe` and restart aoe. It edits `~/.agent-of-empires/config.toml` in place (keeping a `.bak`), sets both views to the full path of `foxy-harness`, and adds status rules so a waiting `apply?`, `run?` or `fetch?` shows as waiting. Running it again changes nothing. By hand it's the entries below. The first is the terminal view, `agent_acp_cmd` the structured view.
 
 ```toml
 [session.custom_agents]
@@ -153,6 +153,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
 - `src/bootstrap.ts` sets up a session (provider, tools, instructions, skills, command hooks, the agent) for any frontend. `src/cli.ts` is the terminal frontend and `src/acp.ts` the ACP one. It supplies the rendering callbacks and the permission prompt.
+- `src/aoe.ts` is `foxy-harness aoe`, which registers the harness in Agent of Empires' config.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
 - `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
 - `src/compact.ts` clears old tool results and holds the fallback summarizer. Providers with server-side compaction implement `compact()`, and the result is a `summary` message that replays in the provider's native form.
