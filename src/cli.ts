@@ -226,6 +226,7 @@ const agent = new Agent({
   sessionId,
   system: buildSystemPrompt(cwd, tools, instructions, skills),
   contextWindow: Number(config.get("HARNESS_CONTEXT_WINDOW")) || undefined,
+  maxSteps: Number(config.get("HARNESS_MAX_STEPS")) || undefined,
   // Advertise a tool the harness never runs, to watch the "Unknown tool" path.
   fakeTools: demoUnknownTool
     ? [
@@ -273,6 +274,14 @@ const agent = new Agent({
     else console.log(dim(`⏺ Compacted conversation, ${info.native ? "server-side" : "summary"}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`));
     spinner.busy("Thinking");
   },
+});
+
+// A turn cut off by HARNESS_MAX_STEPS would otherwise look finished.
+hooks.on("Stop", (e) => {
+  if (e.reason !== "max_steps") return;
+  spinner.idle();
+  const n = Number(config.get("HARNESS_MAX_STEPS"));
+  console.log(red(`⏺ Stopped after ${n} step${n === 1 ? "" : "s"} (HARNESS_MAX_STEPS). Say "continue" to keep going.`));
 });
 
 if (resumed) agent.restore(resumed.session.messages);

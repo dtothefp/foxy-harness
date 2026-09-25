@@ -67,6 +67,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 | `HARNESS_MODEL` | Same as `--model`. |
 | `HARNESS_YOLO=1` | Skip permission prompts. Same as `--yolo`. |
 | `HARNESS_EFFORT` | Reasoning effort. Claude takes `low`, `medium`, `high`, `xhigh`, `max` (unset is the API default, high). Codex takes `minimal` through `xhigh` (default `medium`). |
+| `HARNESS_MAX_STEPS` | Model calls per turn before it stops. Unset is unlimited. A turn that hits it says so, and `continue` picks it back up. |
 | `HARNESS_CONTEXT_WINDOW` | Context window in tokens. Default 272000 (Codex), 200000 (Claude). Compaction thresholds scale with it. |
 | `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
 | `ANTHROPIC_MODEL` | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`. |
