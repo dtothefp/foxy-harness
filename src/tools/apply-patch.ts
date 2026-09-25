@@ -70,7 +70,10 @@ type Op =
   | { kind: "update"; path: string; moveTo?: string; chunks: Chunk[] };
 
 export function parsePatch(text: string): Op[] {
-  let lines = text.trim().split("\n").map((l) => l.replace(/\r$/, ""));
+  let lines = text
+    .trim()
+    .split("\n")
+    .map((l) => l.replace(/\r$/, ""));
   // Models sometimes wrap the patch in a shell heredoc. Unwrap it.
   if (/<<\s*['"]?EOF['"]?\s*$/.test(lines[0] ?? "") && lines.at(-1)?.trim() === "EOF") lines = lines.slice(1, -1);
   if (lines[0]?.trim() !== "*** Begin Patch") throw new Error("Invalid patch: the first line must be '*** Begin Patch'.");

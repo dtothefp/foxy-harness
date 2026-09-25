@@ -148,7 +148,9 @@ async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Da
   if (!process.stdin.isTTY) exit("--resume without an id needs a terminal to pick from. Pass an id.");
   recent.forEach((r, i) => {
     const turns = r.session.messages.filter((m) => m.role === "user").length;
-    console.log(`${cyan(String(i + 1).padStart(2))}  ${dim(`${ago(r.mtime).padEnd(12)} ${r.id.slice(0, 8)}  ${turns} turn${turns === 1 ? "" : "s"}`)}  ${sessionTitle(r.session).slice(0, 60)}`);
+    console.log(
+      `${cyan(String(i + 1).padStart(2))}  ${dim(`${ago(r.mtime).padEnd(12)} ${r.id.slice(0, 8)}  ${turns} turn${turns === 1 ? "" : "s"}`)}  ${sessionTitle(r.session).slice(0, 60)}`,
+    );
   });
   const answer = (await rl.question(dim(`Resume which? [1] `))).trim() || "1";
   const pick = recent[Number(answer) - 1];
@@ -174,7 +176,10 @@ function showToolEnd(output: string, ok: boolean, changes: FileChange[] | undefi
   if (ok && name === "web_fetch") return console.log(dim(`  ⎿ ${output.includes("Attached ") ? "attached" : `${lines.length} lines`}`));
   if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
   const max = ok ? 4 : 12;
-  const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
+  const shown = lines
+    .slice(0, max)
+    .map((l) => `  ${l}`)
+    .join("\n");
   const more = lines.length > max ? `\n  … ${lines.length - max} more lines` : "";
   console.log(ok ? dim(shown + more) : red(shown + more));
 }
@@ -205,11 +210,14 @@ const frontend: Frontend = {
     spinner.busy("Running", 5000);
     const args = input as { path?: string };
     // Without --yolo the permission prompt already printed the diff or command.
-    if (changes) yolo && console.log(renderChanges(changes));
-    else if (name === "bash") yolo && console.log(`${cyan("⏺")} ${describe(input)}`);
-    else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
-    else if (name === "web_fetch") yolo && console.log(`${cyan("⏺")} ${webLabel(name, input)}`);
-    else if (isWeb(name)) console.log(`${cyan("⏺")} ${webLabel(name, input)}`);
+    if (changes) {
+      if (yolo) console.log(renderChanges(changes));
+    } else if (name === "bash") {
+      if (yolo) console.log(`${cyan("⏺")} ${describe(input)}`);
+    } else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
+    else if (name === "web_fetch") {
+      if (yolo) console.log(`${cyan("⏺")} ${webLabel(name, input)}`);
+    } else if (isWeb(name)) console.log(`${cyan("⏺")} ${webLabel(name, input)}`);
     else console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input).slice(0, 120)})`);
   },
   onToolEnd: (output, ok, changes, name, input) => {
@@ -221,8 +229,13 @@ const frontend: Frontend = {
     md?.end();
     const u = usage as Usage;
     const ttft = firstTokenMs ? `ttft ${(firstTokenMs / 1000).toFixed(1)}s · ` : "";
-    const used = u.inputTokens != null ? ` · ${Math.round((100 * (u.inputTokens + (u.outputTokens ?? 0))) / agent.contextWindow)}% context` : "";
-    console.log(dim(`\n${ttft}${(ms / 1000).toFixed(1)}s · in ${u.inputTokens ?? "?"} (cached ${u.cachedTokens ?? 0}) · out ${u.outputTokens ?? "?"}${u.thinkingTokens ? ` (thinking ${u.thinkingTokens})` : ""}${used}`));
+    const used =
+      u.inputTokens != null ? ` · ${Math.round((100 * (u.inputTokens + (u.outputTokens ?? 0))) / agent.contextWindow)}% context` : "";
+    console.log(
+      dim(
+        `\n${ttft}${(ms / 1000).toFixed(1)}s · in ${u.inputTokens ?? "?"} (cached ${u.cachedTokens ?? 0}) · out ${u.outputTokens ?? "?"}${u.thinkingTokens ? ` (thinking ${u.thinkingTokens})` : ""}${used}`,
+      ),
+    );
   },
   onCompact: (info) => {
     const k = (n: number) => `${Math.round(n / 1000)}k`;
@@ -230,7 +243,12 @@ const frontend: Frontend = {
     if (info.kind === "start") return spinner.busy(info.trigger === "auto" ? "Context is filling up, compacting" : "Compacting");
     const secs = spinner.idle();
     if (info.kind === "failed") console.log(red(`⏺ Compaction failed after ${secs}s: ${info.error}`));
-    else console.log(dim(`⏺ Compacted conversation, ${info.native ? "server-side" : "summary"}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`));
+    else
+      console.log(
+        dim(
+          `⏺ Compacted conversation, ${info.native ? "server-side" : "summary"}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`,
+        ),
+      );
     spinner.busy("Thinking");
   },
 };
@@ -316,7 +334,11 @@ async function turn(prompt: string) {
     if (prompt === "/model" || prompt.startsWith("/model ")) {
       const name = prompt.slice("/model".length).trim();
       if (name) agent.provider = providerFor(name);
-      console.log(dim(`⏺ ${name ? "Switched to" : "Using"} ${shortModel(agent.provider.model)} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`));
+      console.log(
+        dim(
+          `⏺ ${name ? "Switched to" : "Using"} ${shortModel(agent.provider.model)} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`,
+        ),
+      );
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
     } else if (prompt === "/compact") {
@@ -324,7 +346,8 @@ async function turn(prompt: string) {
     } else {
       // Image and PDF paths in the prompt (dragged in from Finder) are attached so the model can see them.
       const { attachments, errors } = await attachmentsInPrompt(prompt, cwd);
-      for (const a of attachments) console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}`));
+      for (const a of attachments)
+        console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}`));
       for (const e of errors) console.log(red(`⏺ ${e}`));
       spinner.busy("Thinking");
       await agent.run(prompt, controller.signal, attachments);
@@ -361,7 +384,11 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(
+    dim(
+      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, ctrl+c interrupts a turn, ctrl+d exits`,
+    ),
+  );
   if (resumed) showRecap(resumed.session, resumed.mtime);
   // In raw mode ctrl+c is a keypress, so readline gets it, not the process. During a turn it aborts
   // the turn. At the prompt it clears what's typed, and on an empty prompt it exits.

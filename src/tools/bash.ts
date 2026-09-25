@@ -16,7 +16,8 @@ export const bashTool: Tool = {
         command: { type: "string", description: "The bash command to run" },
         description: {
           type: "string",
-          description: "What the command does in 3 to 8 plain words, shown to the user instead of the command, e.g. \"Check the current git branch\"",
+          description:
+            'What the command does in 3 to 8 plain words, shown to the user instead of the command, e.g. "Check the current git branch"',
         },
         timeout_s: { type: "number", description: "Timeout in seconds (default 60)" },
       },

@@ -4,22 +4,22 @@ How the ChatGPT-subscription login and the Codex Responses backend work, read fr
 
 ## B1. OAuth constants
 
-| Item | Value | Source |
-|---|---|---|
-| Issuer | `https://auth.openai.com` | codex `login/src/server.rs:76` (`DEFAULT_ISSUER`) |
-| Authorize URL | `https://auth.openai.com/oauth/authorize` | `server.rs` `build_authorize_url` |
-| Token URL | `https://auth.openai.com/oauth/token` (also used for refresh) | `auth/manager.rs:212` |
-| Revoke URL | `https://auth.openai.com/oauth/revoke` | `auth/manager.rs:213` |
-| client_id | `app_EMoamEEZ73f0CkXaXp7hrann` (can be overridden with env `CODEX_APP_SERVER_LOGIN_CLIENT_ID`) | `auth/manager.rs:1717`, and the same in pi |
-| Redirect URI | `http://localhost:1455/auth/callback` (codex binds port 1455 and falls back to the actual bound port. pi binds `127.0.0.1:1455` but sends `localhost` in the URI.) | `server.rs:77,193` |
-| Scopes | codex: `openid profile email offline_access api.connectors.read api.connectors.invoke`. pi: `openid profile email offline_access` (enough for inference). | `server.rs:606`, pi `SCOPE` |
-| Extra authorize params | `id_token_add_organizations=true`, `codex_cli_simplified_flow=true`, `originator=<your originator>` (codex default `codex_cli_rs`, pi sends `pi`), plus an optional `allowed_workspace_id=<ids>` | `server.rs:595-600`, `auth/default_client.rs:42` |
-| PKCE | S256. The verifier is 64 random bytes as base64url with no padding, and the challenge is base64url(sha256(verifier)). | `login/src/oauth/pkce.rs`, `oauth/authorization.rs:31` |
-| Code exchange | Form-encoded POST: `grant_type=authorization_code, client_id, code, redirect_uri, code_verifier` | `oauth/client.rs:58-73` |
-| Refresh | POST `grant_type=refresh_token, client_id, refresh_token`. **Codex sends it as JSON** (`TokenEncoding::Json`) and pi sends it form-encoded, so both work. The response has an optional `id_token`, `access_token` and `refresh_token`, and **refresh tokens rotate**. Error codes are `refresh_token_expired`, `refresh_token_reused` and `refresh_token_invalidated`, and each one means you have to log in again. | `auth/manager.rs:1625-1715` |
-| When to refresh | codex refreshes when the access-token JWT `exp` is within 5 minutes, or, if `exp` isn't there, when `last_refresh` is older than 8 days | `auth/manager.rs:203-204, 3005-3026` |
-| Device-code (headless) | POST `https://auth.openai.com/api/accounts/deviceauth/usercode` `{client_id}` returns `{device_auth_id,user_code,interval}`. The user visits `https://auth.openai.com/codex/device`. Poll POST `/api/accounts/deviceauth/token` `{device_auth_id,user_code}` until you get `{authorization_code, code_verifier}`, then exchange with `redirect_uri=https://auth.openai.com/deviceauth/callback` | pi `openai-codex.ts` |
-| Optional API-key exchange | codex also swaps the id_token for an `openai-api-key` via RFC 8693 token-exchange (`requested_token=openai-api-key`). **This isn't needed** for the subscription path. | `server.rs:1013` `obtain_api_key` |
+| Item                      | Value                                                                                                                                                                                                                                                                                                                                                                                                               | Source                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Issuer                    | `https://auth.openai.com`                                                                                                                                                                                                                                                                                                                                                                                           | codex `login/src/server.rs:76` (`DEFAULT_ISSUER`)      |
+| Authorize URL             | `https://auth.openai.com/oauth/authorize`                                                                                                                                                                                                                                                                                                                                                                           | `server.rs` `build_authorize_url`                      |
+| Token URL                 | `https://auth.openai.com/oauth/token` (also used for refresh)                                                                                                                                                                                                                                                                                                                                                       | `auth/manager.rs:212`                                  |
+| Revoke URL                | `https://auth.openai.com/oauth/revoke`                                                                                                                                                                                                                                                                                                                                                                              | `auth/manager.rs:213`                                  |
+| client_id                 | `app_EMoamEEZ73f0CkXaXp7hrann` (can be overridden with env `CODEX_APP_SERVER_LOGIN_CLIENT_ID`)                                                                                                                                                                                                                                                                                                                      | `auth/manager.rs:1717`, and the same in pi             |
+| Redirect URI              | `http://localhost:1455/auth/callback` (codex binds port 1455 and falls back to the actual bound port. pi binds `127.0.0.1:1455` but sends `localhost` in the URI.)                                                                                                                                                                                                                                                  | `server.rs:77,193`                                     |
+| Scopes                    | codex: `openid profile email offline_access api.connectors.read api.connectors.invoke`. pi: `openid profile email offline_access` (enough for inference).                                                                                                                                                                                                                                                           | `server.rs:606`, pi `SCOPE`                            |
+| Extra authorize params    | `id_token_add_organizations=true`, `codex_cli_simplified_flow=true`, `originator=<your originator>` (codex default `codex_cli_rs`, pi sends `pi`), plus an optional `allowed_workspace_id=<ids>`                                                                                                                                                                                                                    | `server.rs:595-600`, `auth/default_client.rs:42`       |
+| PKCE                      | S256. The verifier is 64 random bytes as base64url with no padding, and the challenge is base64url(sha256(verifier)).                                                                                                                                                                                                                                                                                               | `login/src/oauth/pkce.rs`, `oauth/authorization.rs:31` |
+| Code exchange             | Form-encoded POST: `grant_type=authorization_code, client_id, code, redirect_uri, code_verifier`                                                                                                                                                                                                                                                                                                                    | `oauth/client.rs:58-73`                                |
+| Refresh                   | POST `grant_type=refresh_token, client_id, refresh_token`. **Codex sends it as JSON** (`TokenEncoding::Json`) and pi sends it form-encoded, so both work. The response has an optional `id_token`, `access_token` and `refresh_token`, and **refresh tokens rotate**. Error codes are `refresh_token_expired`, `refresh_token_reused` and `refresh_token_invalidated`, and each one means you have to log in again. | `auth/manager.rs:1625-1715`                            |
+| When to refresh           | codex refreshes when the access-token JWT `exp` is within 5 minutes, or, if `exp` isn't there, when `last_refresh` is older than 8 days                                                                                                                                                                                                                                                                             | `auth/manager.rs:203-204, 3005-3026`                   |
+| Device-code (headless)    | POST `https://auth.openai.com/api/accounts/deviceauth/usercode` `{client_id}` returns `{device_auth_id,user_code,interval}`. The user visits `https://auth.openai.com/codex/device`. Poll POST `/api/accounts/deviceauth/token` `{device_auth_id,user_code}` until you get `{authorization_code, code_verifier}`, then exchange with `redirect_uri=https://auth.openai.com/deviceauth/callback`                     | pi `openai-codex.ts`                                   |
+| Optional API-key exchange | codex also swaps the id_token for an `openai-api-key` via RFC 8693 token-exchange (`requested_token=openai-api-key`). **This isn't needed** for the subscription path.                                                                                                                                                                                                                                              | `server.rs:1013` `obtain_api_key`                      |
 
 **Account id:** `chatgpt_account_id` is inside the JWT claim namespace `"https://api.openai.com/auth"`. Codex reads it from the **id_token** at login (`server.rs:847-853`) and persists it as `tokens.account_id`. pi reads the same claim from the **access_token** (`JWT_CLAIM_PATH`). Both tokens carry it. The same namespace also has `chatgpt_plan_type` (free/plus/pro/business/enterprise/edu), `chatgpt_user_id` and `chatgpt_account_is_fedramp`, and email is under `"https://api.openai.com/profile"` (`token_data.rs`).
 
@@ -30,8 +30,7 @@ How the ChatGPT-subscription login and the Codex Responses backend work, read fr
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
 const REDIRECT = "http://localhost:1455/auth/callback";
-const b64url = (b: ArrayBuffer | Uint8Array) =>
-  Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("base64url");
+const b64url = (b: ArrayBuffer | Uint8Array) => Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("base64url");
 
 export async function login() {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(64)));
@@ -40,21 +39,31 @@ export async function login() {
 
   const u = new URL(`${ISSUER}/oauth/authorize`);
   Object.entries({
-    response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT,
+    response_type: "code",
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT,
     scope: "openid profile email offline_access",
-    code_challenge: challenge, code_challenge_method: "S256", state,
-    id_token_add_organizations: "true", codex_cli_simplified_flow: "true",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state,
+    id_token_add_organizations: "true",
+    codex_cli_simplified_flow: "true",
     originator: "my_harness",
   }).forEach(([k, v]) => u.searchParams.set(k, v));
 
   const code = await new Promise<string>((resolve, reject) => {
     const server = Bun.serve({
-      port: 1455, hostname: "127.0.0.1",
+      port: 1455,
+      hostname: "127.0.0.1",
       fetch(req) {
         const q = new URL(req.url);
         if (q.pathname !== "/auth/callback") return new Response("not found", { status: 404 });
-        if (q.searchParams.get("state") !== state) { reject(new Error("state mismatch")); return new Response("bad state", { status: 400 }); }
-        resolve(q.searchParams.get("code")!); setTimeout(() => server.stop(), 100);
+        if (q.searchParams.get("state") !== state) {
+          reject(new Error("state mismatch"));
+          return new Response("bad state", { status: 400 });
+        }
+        resolve(q.searchParams.get("code")!);
+        setTimeout(() => server.stop(), 100);
         return new Response("Logged in. You can close this tab.");
       },
     });
@@ -65,18 +74,28 @@ export async function login() {
   const tok = await fetch(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "authorization_code", client_id: CLIENT_ID, code, redirect_uri: REDIRECT, code_verifier: verifier }),
-  }).then(r => { if (!r.ok) throw new Error(`exchange ${r.status}`); return r.json() as any; });
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID,
+      code,
+      redirect_uri: REDIRECT,
+      code_verifier: verifier,
+    }),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`exchange ${r.status}`);
+    return r.json() as any;
+  });
   return persist(tok);
 }
 
 export async function refresh(refresh_token: string) {
   const r = await fetch(`${ISSUER}/oauth/token`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ grant_type: "refresh_token", client_id: CLIENT_ID, refresh_token }),
   });
   if (!r.ok) throw new Error(`refresh ${r.status}: ${await r.text()}`); // expired/reused/invalidated => re-login
-  return persist(await r.json() as any, refresh_token);
+  return persist((await r.json()) as any, refresh_token);
 }
 
 const claims = (jwt: string) => JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
@@ -87,7 +106,8 @@ async function persist(t: { id_token?: string; access_token: string; refresh_tok
     auth_mode: "chatgpt",
     OPENAI_API_KEY: null,
     tokens: {
-      id_token: t.id_token, access_token: t.access_token,
+      id_token: t.id_token,
+      access_token: t.access_token,
       refresh_token: t.refresh_token ?? prevRefresh, // rotated on refresh
       account_id: auth.chatgpt_account_id,
     },
@@ -106,15 +126,15 @@ The path is `$CODEX_HOME/auth.json` (default `~/.codex`). Codex may keep it in t
 
 ```json
 {
-  "auth_mode": "chatgpt",              // lowercase enum: "apikey" | "chatgpt" | "chatgptAuthTokens" | "headers" | "agentIdentity"...
-  "OPENAI_API_KEY": null,              // or the exchanged key
+  "auth_mode": "chatgpt", // lowercase enum: "apikey" | "chatgpt" | "chatgptAuthTokens" | "headers" | "agentIdentity"...
+  "OPENAI_API_KEY": null, // or the exchanged key
   "tokens": {
-    "id_token": "<raw JWT string>",    // serialized back as the raw JWT (token_data.rs serialize_id_token)
+    "id_token": "<raw JWT string>", // serialized back as the raw JWT (token_data.rs serialize_id_token)
     "access_token": "<JWT>",
     "refresh_token": "<opaque>",
-    "account_id": "<chatgpt_account_id>"   // Option
+    "account_id": "<chatgpt_account_id>" // Option
   },
-  "last_refresh": "2026-09-24T12:00:00Z"   // RFC3339 UTC
+  "last_refresh": "2026-09-24T12:00:00Z" // RFC3339 UTC
   // optional, skipped when None: agent_identity, personal_access_token, bedrock_api_key, bedrock_access_keys
 }
 ```
@@ -160,34 +180,52 @@ const res = await fetch("https://chatgpt.com/backend-api/codex/responses", {
     "chatgpt-account-id": auth.tokens.account_id,
     "OpenAI-Beta": "responses=experimental",
     originator: "my_harness",
-    "session-id": sid, "x-client-request-id": sid,
-    accept: "text/event-stream", "content-type": "application/json",
+    "session-id": sid,
+    "x-client-request-id": sid,
+    accept: "text/event-stream",
+    "content-type": "application/json",
   },
   body: JSON.stringify({
     model: "gpt-5.5",
     instructions: "You are a coding agent. Use the bash tool.",
     input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "List files in cwd" }] }],
-    tools: [{ type: "function", name: "bash", description: "Run a bash command",
-              parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } }],
-    tool_choice: "auto", parallel_tool_calls: true,
+    tools: [
+      {
+        type: "function",
+        name: "bash",
+        description: "Run a bash command",
+        parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
+      },
+    ],
+    tool_choice: "auto",
+    parallel_tool_calls: true,
     reasoning: { effort: "medium", summary: "auto" },
     text: { verbosity: "low" },
     include: ["reasoning.encrypted_content"],
-    store: false, stream: true, prompt_cache_key: sid,
+    store: false,
+    stream: true,
+    prompt_cache_key: sid,
   }),
 });
 if (!res.ok) throw new Error(`${res.status} ${await res.text()}`); // 401 => refresh + retry once
-const dec = new TextDecoder(); let buf = "";
+const dec = new TextDecoder();
+let buf = "";
 for await (const chunk of res.body!) {
   buf += dec.decode(chunk, { stream: true });
   let i;
   while ((i = buf.indexOf("\n\n")) >= 0) {
-    const frame = buf.slice(0, i); buf = buf.slice(i + 2);
-    const data = frame.split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).trim()).join("\n");
+    const frame = buf.slice(0, i);
+    buf = buf.slice(i + 2);
+    const data = frame
+      .split("\n")
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => l.slice(5).trim())
+      .join("\n");
     if (!data || data === "[DONE]") continue;
     const ev = JSON.parse(data);
     if (ev.type === "response.output_text.delta") process.stdout.write(ev.delta);
-    else if (ev.type === "response.output_item.done" && ev.item.type === "function_call") console.log("\nTOOL", ev.item.name, ev.item.arguments, ev.item.call_id);
+    else if (ev.type === "response.output_item.done" && ev.item.type === "function_call")
+      console.log("\nTOOL", ev.item.name, ev.item.arguments, ev.item.call_id);
     else if (ev.type === "error" || ev.type === "response.failed") throw new Error(JSON.stringify(ev));
     else if (["response.completed", "response.done", "response.incomplete"].includes(ev.type)) console.log("\n[done]", ev.response?.usage);
   }

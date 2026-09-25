@@ -32,7 +32,11 @@ export function chooseProvider(config: Config, flags: { provider?: string; model
   let provider =
     flags.provider ??
     config.get("HARNESS_PROVIDER") ??
-    (config.get("CLAUDE_CODE_USE_BEDROCK") === "1" ? "bedrock" : /^(claude|opus|sonnet|haiku|arn:)/i.test(model ?? "") ? "anthropic" : "codex");
+    (config.get("CLAUDE_CODE_USE_BEDROCK") === "1"
+      ? "bedrock"
+      : /^(claude|opus|sonnet|haiku|arn:)/i.test(model ?? "")
+        ? "anthropic"
+        : "codex");
   if (resumed) {
     const { provider: saved, model: savedModel } = resumed;
     if (providerFamily(saved, savedModel) !== providerFamily(provider)) {
@@ -76,7 +80,10 @@ export async function startSession(o: SessionOptions) {
   // /model swaps the model within the session's provider.
   const providerFor = (model = o.choice.model) => makeProvider(config, { ...o.choice, model }, sessionId);
   const provider = providerFor();
-  const tools = toolsFor(provider.name, provider.hostedTools.map((t) => t.name));
+  const tools = toolsFor(
+    provider.name,
+    provider.hostedTools.map((t) => t.name),
+  );
   // Command hooks from settings.json run before the permission prompt, so one can deny a call first.
   registerCommandHooks(hooks, await loadCommandHooks(cwd), sessionId, cwd);
   const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
@@ -86,7 +93,11 @@ export async function startSession(o: SessionOptions) {
   if (ask) {
     hooks.on("PreToolUse", async (e) => {
       if (!needsPermission(e)) return;
-      await hooks.emit({ type: "Notification", message: `foxy-harness needs your permission to use ${e.tool}`, notificationType: "permission_prompt" });
+      await hooks.emit({
+        type: "Notification",
+        message: `foxy-harness needs your permission to use ${e.tool}`,
+        notificationType: "permission_prompt",
+      });
       return ask(e);
     });
   }

@@ -33,8 +33,7 @@ export function diffLines(before: string, after: string): DiffLine[] {
     const lcs = new Uint32Array((n + 1) * w);
     for (let x = n - 1; x >= 0; x--) {
       for (let y = m - 1; y >= 0; y--) {
-        lcs[x * w + y] =
-          a[pre + x] === b[pre + y] ? lcs[(x + 1) * w + y + 1]! + 1 : Math.max(lcs[(x + 1) * w + y]!, lcs[x * w + y + 1]!);
+        lcs[x * w + y] = a[pre + x] === b[pre + y] ? lcs[(x + 1) * w + y + 1]! + 1 : Math.max(lcs[(x + 1) * w + y]!, lcs[x * w + y + 1]!);
       }
     }
     while (i < aEnd && j < bEnd) {
@@ -54,7 +53,7 @@ export function diffLines(before: string, after: string): DiffLine[] {
 
 // Groups changed lines with `context` unchanged lines around them, like `git diff`.
 export function hunks(lines: DiffLine[], context = 3): DiffLine[][] {
-  const shown = new Array<boolean>(lines.length).fill(false);
+  const shown = Array.from({ length: lines.length }, () => false);
   lines.forEach((l, i) => {
     if (l.op === " ") return;
     for (let k = Math.max(0, i - context); k <= Math.min(lines.length - 1, i + context); k++) shown[k] = true;

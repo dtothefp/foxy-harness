@@ -27,8 +27,7 @@ type AuthFile = {
   last_refresh: string;
 };
 
-const b64url = (b: ArrayBuffer | Uint8Array) =>
-  Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("base64url");
+const b64url = (b: ArrayBuffer | Uint8Array) => Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("base64url");
 
 function jwtClaims(jwt: string): Record<string, any> {
   return JSON.parse(Buffer.from(jwt.split(".")[1] ?? "", "base64url").toString());

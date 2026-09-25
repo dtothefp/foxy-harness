@@ -34,7 +34,8 @@ export async function setupAoe(): Promise<string> {
 
   // Never hand aoe a file it can't read.
   const parsed = Bun.TOML.parse(after) as { session?: { custom_agents?: Record<string, string>; agent_acp_cmd?: Record<string, string> } };
-  if (parsed.session?.agent_acp_cmd?.[NAME] !== `${bin} --acp`) throw new Error(`Couldn't update ${path}. Edit it by hand, see the README.`);
+  if (parsed.session?.agent_acp_cmd?.[NAME] !== `${bin} --acp`)
+    throw new Error(`Couldn't update ${path}. Edit it by hand, see the README.`);
 
   if (after === before) return `${path} already set up.`;
   if (before) await Bun.write(`${path}.bak`, before);
@@ -71,7 +72,8 @@ function setKey(lines: string[], table: string, key: string, value: string): str
   if (parentSection) {
     const inline = lines.findIndex((l, i) => i > parentSection.start && i < parentSection.end && new RegExp(`^\\s*${child}\\s*=`).test(l));
     if (inline >= 0) {
-      if (!/=\s*\{\s*\}\s*$/.test(lines[inline]!)) throw new Error(`${parent}.${child} is an inline table. Move it to [${table}] and run this again.`);
+      if (!/=\s*\{\s*\}\s*$/.test(lines[inline]!))
+        throw new Error(`${parent}.${child} is an inline table. Move it to [${table}] and run this again.`);
       lines = lines.filter((_, i) => i !== inline);
     }
   }

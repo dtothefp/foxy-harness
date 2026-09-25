@@ -46,10 +46,14 @@ export function watchPackages(
   onLoad?: (what: string) => void,
 ) {
   const seen = new Set<string>(); // real paths of instruction files and SKILL.md files already in context
-  const ready = Promise.all([
-    ...(loaded.instructions ? [loaded.instructions.path] : []),
-    ...loaded.skills.map((s) => resolve(cwd, s.path)),
-  ].map((p) => realpath(p).then((r) => seen.add(r), () => {})));
+  const ready = Promise.all(
+    [...(loaded.instructions ? [loaded.instructions.path] : []), ...loaded.skills.map((s) => resolve(cwd, s.path))].map((p) =>
+      realpath(p).then(
+        (r) => seen.add(r),
+        () => {},
+      ),
+    ),
+  );
   const byDir = new Map<string, Promise<Instructions | undefined>>();
   const scannedDirs = new Set<string>();
 
@@ -94,7 +98,9 @@ export function watchPackages(
         if (real !== self) {
           const rel = relative(cwd, found.path);
           onLoad?.(rel);
-          added.push(`<instructions path="${rel}">\nInstructions for files under ${dirname(rel)}/. Follow them there.\n\n${found.text}\n</instructions>`);
+          added.push(
+            `<instructions path="${rel}">\nInstructions for files under ${dirname(rel)}/. Follow them there.\n\n${found.text}\n</instructions>`,
+          );
         }
       }
 
@@ -102,7 +108,10 @@ export function watchPackages(
         if (scannedDirs.has(dir)) continue;
         scannedDirs.add(dir);
         const fresh: Skill[] = [];
-        for (const skill of await scanSkills(SKILL_DIRS.map((d) => join(dir, d)), cwd)) {
+        for (const skill of await scanSkills(
+          SKILL_DIRS.map((d) => join(dir, d)),
+          cwd,
+        )) {
           const r = await realpath(resolve(cwd, skill.path)).catch(() => skill.path);
           if (!seen.has(r)) {
             seen.add(r);

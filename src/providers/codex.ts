@@ -1,7 +1,17 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
 import { webSearchTool } from "../tools/web.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, type ServerToolCall, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
+import {
+  type Completion,
+  type CompletionRequest,
+  type Attachment,
+  type Message,
+  type Provider,
+  reasoningHeading,
+  type ServerToolCall,
+  SUMMARY_PREFIX,
+  type ToolCall,
+} from "./types.ts";
 
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
 const BASE = "https://chatgpt.com/backend-api/codex";
@@ -77,7 +87,11 @@ function toInput(messages: Message[]): unknown[] {
   for (const m of messages) {
     if (m.role !== "tool") flush();
     if (m.role === "user") {
-      input.push({ type: "message", role: "user", content: [...(m.attachments ?? []).map(inputAttachment), { type: "input_text", text: m.text }] });
+      input.push({
+        type: "message",
+        role: "user",
+        content: [...(m.attachments ?? []).map(inputAttachment), { type: "input_text", text: m.text }],
+      });
     } else if (m.role === "summary") {
       if (m.raw) input.push(stripId(m.raw));
       else input.push({ type: "message", role: "user", content: [{ type: "input_text", text: SUMMARY_PREFIX + m.text }] });
@@ -97,7 +111,9 @@ function toInput(messages: Message[]): unknown[] {
 
 function inputAttachment(a: Attachment) {
   const url = `data:${a.mediaType};base64,${a.data}`;
-  return a.mediaType === "application/pdf" ? { type: "input_file", filename: a.name, file_data: url } : { type: "input_image", image_url: url };
+  return a.mediaType === "application/pdf"
+    ? { type: "input_file", filename: a.name, file_data: url }
+    : { type: "input_image", image_url: url };
 }
 
 function stripId(item: unknown) {

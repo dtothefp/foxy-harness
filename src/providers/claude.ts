@@ -2,7 +2,15 @@ import type { Config } from "../config.ts";
 import { webSearchTool } from "../tools/web.ts";
 import { eventStreamEvents } from "./eventstream.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
+import {
+  type Completion,
+  type CompletionRequest,
+  type Attachment,
+  type Message,
+  type Provider,
+  reasoningHeading,
+  SUMMARY_PREFIX,
+} from "./types.ts";
 
 // Claude over two transports that share one request and event shape:
 //   anthropic  the Messages API (API key or auth token)
@@ -102,7 +110,13 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
       for (let i = 0; res.stopReason === "pause_turn" && i < MAX_CONTINUATIONS; i++) {
         const partial: Message = { role: "assistant", text: res.text, toolCalls: [], raw: res.raw };
         const next = await send({ ...req, messages: [...req.messages, partial] });
-        res = { ...next, text: res.text + next.text, toolCalls: [...res.toolCalls, ...next.toolCalls], raw: [...res.raw, ...next.raw], firstTokenMs: res.firstTokenMs };
+        res = {
+          ...next,
+          text: res.text + next.text,
+          toolCalls: [...res.toolCalls, ...next.toolCalls],
+          raw: [...res.raw, ...next.raw],
+          firstTokenMs: res.firstTokenMs,
+        };
       }
       return res;
     },
@@ -160,7 +174,9 @@ function bedrockEndpoint(model: string, config: Config): Endpoint {
   // Raw AWS credentials need SigV4 signing, which isn't built yet.
   const token = config.get("AWS_BEARER_TOKEN_BEDROCK") ?? config.get("ANTHROPIC_AUTH_TOKEN");
   if (!token && config.get("CLAUDE_CODE_SKIP_BEDROCK_AUTH") !== "1") {
-    throw new Error("Bedrock needs AWS_BEARER_TOKEN_BEDROCK, or a gateway with CLAUDE_CODE_SKIP_BEDROCK_AUTH=1. SigV4 isn't supported yet.");
+    throw new Error(
+      "Bedrock needs AWS_BEARER_TOKEN_BEDROCK, or a gateway with CLAUDE_CODE_SKIP_BEDROCK_AUTH=1. SigV4 isn't supported yet.",
+    );
   }
   return {
     // Same path the Anthropic Bedrock SDK builds, appended to the base URL. The model (often an ARN) goes in the path.
@@ -190,7 +206,10 @@ function requestBody(req: CompletionRequest, hostedSearch: boolean) {
     max_tokens: MAX_TOKENS,
     // Cache breakpoint on the system prompt. Tools render before it, so both stay cached all session.
     system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
-    tools: [...req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })), ...(hostedSearch ? [WEB_SEARCH] : [])],
+    tools: [
+      ...req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
+      ...(hostedSearch ? [WEB_SEARCH] : []),
+    ],
     messages: toMessages(req.messages),
   };
 }
@@ -219,14 +238,12 @@ function toMessages(messages: Message[]) {
     else if (m.role === "summary") {
       if (isNativeSummary(m)) push("assistant", [m.raw as Block]);
       else push("user", [{ type: "text", text: SUMMARY_PREFIX + m.text }]);
-    }
-    else if (m.role === "tool") {
+    } else if (m.role === "tool") {
       const images = (m.attachments ?? []).filter((a) => !isPdf(a));
       const content = images.length ? [{ type: "text", text: m.output }, ...images.map(attachmentBlock)] : m.output;
       push("user", [{ type: "tool_result", tool_use_id: m.callId, content }]);
       pending.push(...(m.attachments ?? []).filter(isPdf).map(attachmentBlock));
-    }
-    else if (m.raw) push("assistant", m.raw as Block[]);
+    } else if (m.raw) push("assistant", m.raw as Block[]);
     else {
       push("assistant", [
         ...(m.text ? [{ type: "text", text: m.text }] : []),
@@ -240,7 +257,8 @@ function toMessages(messages: Message[]) {
   // Thinking blocks can't carry one, which only matters when a paused turn ends on one.
   const last = out.at(-1);
   const block = last?.content.at(-1);
-  if (last && block && !/thinking/.test(block.type)) last.content[last.content.length - 1] = { ...block, cache_control: { type: "ephemeral" } };
+  if (last && block && !/thinking/.test(block.type))
+    last.content[last.content.length - 1] = { ...block, cache_control: { type: "ephemeral" } };
   return out;
 }
 
@@ -301,7 +319,8 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
       case "message_delta":
         if (ev.delta?.stop_reason) out.stopReason = ev.delta.stop_reason;
         if (ev.usage?.output_tokens != null) out.usage.outputTokens = ev.usage.output_tokens;
-        if (ev.usage?.output_tokens_details?.thinking_tokens != null) out.usage.thinkingTokens = ev.usage.output_tokens_details.thinking_tokens;
+        if (ev.usage?.output_tokens_details?.thinking_tokens != null)
+          out.usage.thinkingTokens = ev.usage.output_tokens_details.thinking_tokens;
         break;
       case "error":
         throw new Error(`claude stream error: ${JSON.stringify(ev.error)}`);
