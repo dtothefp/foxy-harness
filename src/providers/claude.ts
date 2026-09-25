@@ -42,6 +42,9 @@ const ALIASES: Record<string, string> = {
 };
 
 type Block = Record<string, any>;
+
+// A 200 with no Claude events. Nothing reached the caller, so the request can be sent again.
+class NoReply extends Error {}
 type Endpoint = { url: string; headers: Record<string, string>; body: Record<string, unknown> };
 
 export function resolveClaudeModel(name: string, transport: ClaudeTransport, config: Config): string {
@@ -58,8 +61,11 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
   const endpoint = transport === "bedrock" ? bedrockEndpoint(model, config) : anthropicEndpoint(model, config);
   // HARNESS_EFFORT is low, medium, high, xhigh or max. Unset leaves the API default (high).
   const effort = config.get("HARNESS_EFFORT");
-  const settings = { effort: effort ?? "default (high)", thinking: "adaptive, summarized" };
+  const settings: Record<string, string> = { effort: effort ?? "default (high)", thinking: "adaptive, summarized" };
   let thinking = true;
+  // Set once the endpoint answers a request with nothing and only answers again without the older images.
+  // Some gateways cap the request size and fail silently past it, and screenshots add up.
+  let dropImages = false;
   // HARNESS_WEB_SEARCH=local uses the harness's own search, for orgs that turned the server tool off.
   const hostedSearch = transport === "anthropic" && config.get("HARNESS_WEB_SEARCH") !== "local";
 
@@ -67,10 +73,12 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
     // Every request that carries a compaction block needs the beta header, not just the one that made it.
     const beta = extra.compaction || req.messages.some(isNativeSummary);
     const headers = beta ? withBeta(endpoint.headers, COMPACT_BETA) : endpoint.headers;
+    let emptyReplies = 0;
     for (let attempt = 0; ; attempt++) {
+      const sent = dropImages ? { ...req, messages: dropOlderAttachments(req.messages) } : req;
       const body = JSON.stringify({
         ...endpoint.body,
-        ...requestBody(req, hostedSearch),
+        ...requestBody(sent, hostedSearch),
         ...(thinking ? { thinking: THINKING } : {}),
         ...(effort ? { output_config: { effort } } : {}),
         ...extra,
@@ -79,7 +87,20 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
       if (res.ok) {
         // Bedrock streams AWS event frames. The direct API and some gateways stream SSE.
         const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
-        return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req);
+        try {
+          return await readStream(binary ? eventStreamEvents(res) : sseEvents(res), req);
+        } catch (err) {
+          if (!(err instanceof NoReply) || req.signal?.aborted) throw err;
+          emptyReplies++;
+          // Once as is, in case it was a blip. Then without the older images.
+          if (emptyReplies === 1) continue;
+          if (!dropImages && countAttachments(req.messages) > countAttachments(dropOlderAttachments(req.messages))) {
+            dropImages = true;
+            settings.images = "older images dropped (the endpoint sent nothing back with them)";
+            continue;
+          }
+          throw new Error(`${err.message}\n${describeRequest(body, sent.messages, res)}`);
+        }
       }
       const text = await res.text();
       if (thinking && res.status === 400 && /thinking|adaptive|display/i.test(text)) {
@@ -214,6 +235,32 @@ function requestBody(req: CompletionRequest, hostedSearch: boolean) {
   };
 }
 
+// Images and PDFs before the latest prompt, swapped for a note. The latest prompt keeps its own.
+function dropOlderAttachments(messages: Message[]): Message[] {
+  const latest = messages.findLastIndex((m) => m.role === "user");
+  return messages.map((m, i) => {
+    if (i >= latest || (m.role !== "user" && m.role !== "tool") || !m.attachments?.length) return m;
+    const note = `[${m.attachments.map((a) => a.name).join(", ")} removed from the history to keep the request small]`;
+    return m.role === "user"
+      ? { ...m, attachments: undefined, text: `${m.text}\n${note}` }
+      : { ...m, attachments: undefined, output: `${m.output}\n${note}` };
+  });
+}
+
+const countAttachments = (messages: Message[]) =>
+  messages.reduce((n, m) => n + ((m.role === "user" || m.role === "tool") && m.attachments ? m.attachments.length : 0), 0);
+
+// What went out and what came back, for errors the endpoint doesn't explain.
+function describeRequest(body: string, messages: Message[], res: Response): string {
+  const header = (name: string) => res.headers.get(name) ?? "none";
+  const requestId = res.headers.get("x-amzn-requestid") ?? res.headers.get("request-id") ?? "none";
+  return [
+    `Request ${(body.length / 1e6).toFixed(2)} MB, ${messages.length} messages, ${countAttachments(messages)} images or PDFs.`,
+    `Response ${res.status}, content-type ${header("content-type")}, content-length ${header("content-length")}, request id ${requestId}.`,
+    `Start a new session and run \`foxy-harness transcript\` there to carry this one's context over.`,
+  ].join("\n");
+}
+
 function toMessages(messages: Message[]) {
   const out: { role: "user" | "assistant"; content: Block[] }[] = [];
   // Anthropic wants strictly alternating roles, so consecutive same-role content merges.
@@ -331,7 +378,7 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
   }
   // A gateway or proxy that answers 200 without Claude's events would otherwise look like an empty reply.
   if (!sawStart)
-    throw new Error(
+    throw new NoReply(
       `claude stream ended before message_start. The endpoint answered but sent ${unknown.length ? `this instead: ${unknown.join("\n")}` : "nothing"}.`,
     );
   // Replayed verbatim next turn (thinking blocks need their signatures). Empty text blocks are rejected.
