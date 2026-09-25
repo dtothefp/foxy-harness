@@ -16,6 +16,7 @@ import { keyInput, onMouse } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
 import { createTui } from "./tui.ts";
 import { renderChanges } from "./render.ts";
+import { runBash } from "./tools/bash.ts";
 import type { FileChange } from "./tools/types.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -47,9 +48,11 @@ const tui = createTui(() => ({
   label: question,
   hint: question
     ? "enter answers · esc stops the turn"
-    : current
-      ? "enter steers the turn · esc interrupts"
-      : "enter sends · shift+enter for a newline · ctrl+d exits",
+    : [...pendingLines, rl.line][0]?.startsWith("!")
+      ? "shell command · enter runs it, the model sees the output with your next prompt"
+      : current
+        ? "enter steers the turn · esc interrupts"
+        : "enter sends · shift+enter for a newline · ctrl+d exits",
 }));
 // Piped output only. Whether the model's text stopped partway through a line.
 let midLine = false;
@@ -413,10 +416,10 @@ rl.on("line", (line) => {
     return;
   }
   if (!text) return;
-  if (text.startsWith("/")) {
+  if (text.startsWith("/") || text.startsWith("!")) {
     rl.write(text.replace(/\n/g, " "));
     tui.render();
-    return console.log(dim("⏺ Commands wait for the turn to finish. esc stops it."));
+    return console.log(dim("⏺ Commands and ! shell commands wait for the turn to finish. esc stops it."));
   }
   console.log(dim("⏺ Queued, it goes in after the current step"));
   void attachmentsInPrompt(text, cwd).then(({ attachments }) => agent.steer(text, attachments.length ? attachments : undefined));
@@ -457,6 +460,8 @@ async function turn(prompt: string) {
       );
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
+    } else if (prompt.startsWith("!")) {
+      await shell(prompt.slice(1).trim(), controller.signal);
     } else if (prompt === "/compact") {
       if (!(await agent.compact("manual", controller.signal))) console.log(dim("Nothing to compact."));
     } else {
@@ -485,6 +490,21 @@ async function turn(prompt: string) {
     }
     tui.render();
   }
+}
+
+// `!command` runs it in the project directory, like Claude Code's bash mode. It skips the model and the
+// permission prompt (you typed it), and the command and its output go into the history for the next prompt.
+async function shell(command: string, signal: AbortSignal) {
+  if (!command) return console.log(dim("⏺ Type a command after the !, like !git status"));
+  tui.busy("Running");
+  const r = await runBash(command, { cwd, signal, timeoutS: 600 });
+  const output = r.output.trimEnd();
+  if (output) console.log(output);
+  const status = r.timedOut ? "timed out" : signal.aborted ? "interrupted" : `exit ${r.exitCode}`;
+  if (r.exitCode !== 0) console.log(red(`⏺ ${status}`));
+  await agent.note(
+    `I ran a shell command myself. You can refer to it.\n<bash-input>${command}</bash-input>\n<bash-output status="${status}">\n${output}\n</bash-output>`,
+  );
 }
 
 // The last exchange of a resumed session, so it's clear where things left off.
@@ -520,7 +540,7 @@ if (oneShot) {
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
   console.log(
     dim(
-      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
+      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
     ),
   );
   if (resumed) showRecap(resumed.session, resumed.mtime);

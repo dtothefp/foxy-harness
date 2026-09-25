@@ -121,6 +121,8 @@ Every edit shows a red/green diff and asks before writing. Every bash command an
 
 The terminal view runs full screen, like Claude Code's fullscreen mode. Each prompt starts at the top of the screen with its reply below, and the input stays pinned to the bottom. Scroll back with the mouse wheel or PgUp/PgDn, and typing jumps back to the bottom. The view keeps its own scrollback, so select text with shift+drag (option+drag in iTerm2). On exit the whole transcript prints to the normal screen, where your terminal's scrollback has it. `HARNESS_FULLSCREEN=0` keeps a plain line prompt instead.
 
+Start a prompt with `!` to run a shell command yourself, like Claude Code's bash mode. It runs in the project directory without asking, prints its output, and adds the command and output to the history so the model sees them with your next prompt.
+
 You can type while a turn runs. The input stays open at the bottom, and Enter queues what you typed. It joins the same run at the next step (after the tool calls in flight finish) as another user message, so the model sees it before deciding what to do next. It doesn't start a second agent or wait for the turn to end. Esc or Ctrl+C stops the turn, and anything still queued goes back into the prompt to edit or send. Slash commands wait for the turn to finish. Over ACP a `session/prompt` sent during a turn steers it the same way and resolves when the turn ends.
 
 Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step, along with the directory it ran in. The banner shows the id.
