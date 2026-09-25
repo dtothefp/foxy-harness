@@ -106,7 +106,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - Edit tools only `plan`. They return `FileChange[]` (before/after per file). The agent passes that to the PreToolUse hook for the diff prompt, then writes it with `src/tools/changes.ts`.
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.
 - `src/tools/edit-file.ts` is exact string replace for Claude (same shape as Claude Code's Edit).
-- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies.
+- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/spinner.ts` draws the status line for quiet stretches.
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Images and PDFs come back as attachments, office documents as text (`src/attachments.ts`).
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
