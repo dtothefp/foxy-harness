@@ -13,8 +13,10 @@ import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider, Usage } from "./providers/types.ts";
 import { keyInput } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
+import { createSpinner } from "./spinner.ts";
 import { renderChanges } from "./render.ts";
 import { toolsFor } from "./tools/index.ts";
+import type { FileChange } from "./tools/types.ts";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
@@ -31,29 +33,7 @@ const describe = (input: unknown) => {
   return description?.trim() || `$ ${command?.split("\n")[0]}`;
 };
 
-// One line that redraws in place with elapsed seconds, for waits with no streamed output (compaction).
-const spinner = (() => {
-  const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let started = 0;
-  const elapsed = () => Math.round((performance.now() - started) / 1000);
-  return {
-    start(label: string) {
-      started = performance.now();
-      if (!process.stdout.isTTY) return console.log(dim(`⏺ ${label}…`));
-      let i = 0;
-      const draw = () => process.stdout.write(`\r\x1b[2K${cyan(frames[i++ % frames.length]!)} ${dim(`${label}… ${elapsed()}s`)}`);
-      draw();
-      timer = setInterval(draw, 100);
-    },
-    stop() {
-      if (timer) process.stdout.write("\r\x1b[2K");
-      clearInterval(timer);
-      timer = undefined;
-      return elapsed();
-    },
-  };
-})();
+const spinner = createSpinner();
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {
@@ -133,6 +113,7 @@ watchPackages(hooks, cwd, { instructions, skills }, (what) => console.log(dim(`�
 let current: AbortController | undefined;
 
 async function ask(question: string) {
+  spinner.idle();
   const answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
   if (answer === "" || /^y(es)?$/i.test(answer)) return;
   return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
@@ -150,6 +131,19 @@ if (!yolo) {
     console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
     return ask("run?");
   });
+}
+
+// The model reads the full tool result. The user sees a glimpse on success (nothing for bash) and more on
+// failure, since that's what they need to see.
+function showToolEnd(output: string, ok: boolean, changes: FileChange[] | undefined, name: string, input: unknown) {
+  if (ok && (changes || name === "bash")) return;
+  const lines = output.trimEnd().split("\n");
+  if (ok && name === "read_file") return console.log(dim(`  ⎿ ${output.startsWith("Attached ") ? "attached" : `${lines.length} lines`}`));
+  if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
+  const max = ok ? 4 : 12;
+  const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
+  const more = lines.length > max ? `\n  … ${lines.length - max} more lines` : "";
+  console.log(ok ? dim(shown + more) : red(shown + more));
 }
 
 const agent = new Agent({
@@ -178,6 +172,7 @@ const agent = new Agent({
   onText: (d) => (md ? md.push(d) : process.stdout.write(d)),
   onReasoning: (s) => console.log(dim(`\x1b[3m✻ ${s}\x1b[23m`)),
   onToolStart: (name, input, changes) => {
+    spinner.busy("Running", 5000);
     const args = input as { path?: string };
     // Without --yolo the permission hook already printed the diff or command.
     if (changes) yolo && console.log(renderChanges(changes));
@@ -185,17 +180,10 @@ const agent = new Agent({
     else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
     else console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input).slice(0, 120)})`);
   },
-  // The model reads the full result. The user sees a glimpse on success (nothing for bash) and more on
-  // failure, since that's what they need to see.
   onToolEnd: (output, ok, changes, name, input) => {
-    if (ok && (changes || name === "bash")) return;
-    const lines = output.trimEnd().split("\n");
-    if (ok && name === "read_file") return console.log(dim(`  ⎿ ${output.startsWith("Attached ") ? "attached" : `${lines.length} lines`}`));
-    if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
-    const max = ok ? 4 : 12;
-    const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
-    const more = lines.length > max ? `\n  … ${lines.length - max} more lines` : "";
-    console.log(ok ? dim(shown + more) : red(shown + more));
+    showToolEnd(output, ok, changes, name, input);
+    // The model is called next.
+    spinner.busy("Thinking");
   },
   onStep: ({ ms, firstTokenMs, usage }) => {
     md?.end();
@@ -207,11 +195,11 @@ const agent = new Agent({
   onCompact: (info) => {
     const k = (n: number) => `${Math.round(n / 1000)}k`;
     if (info.kind === "clear") return console.log(dim(`⏺ Cleared old tool results (~${k(info.freedTokens)} tokens)`));
-    if (info.kind === "start") return spinner.start(info.trigger === "auto" ? "Context is filling up, compacting" : "Compacting");
-    const secs = spinner.stop();
-    if (info.kind === "failed") return console.log(red(`⏺ Compaction failed after ${secs}s: ${info.error}`));
-    const how = info.native ? "server-side" : "summary";
-    console.log(dim(`⏺ Compacted conversation, ${how}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`));
+    if (info.kind === "start") return spinner.busy(info.trigger === "auto" ? "Context is filling up, compacting" : "Compacting");
+    const secs = spinner.idle();
+    if (info.kind === "failed") console.log(red(`⏺ Compaction failed after ${secs}s: ${info.error}`));
+    else console.log(dim(`⏺ Compacted conversation, ${info.native ? "server-side" : "summary"}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`));
+    spinner.busy("Thinking");
   },
 });
 
@@ -268,11 +256,13 @@ async function turn(prompt: string) {
       const { attachments, errors } = await attachmentsInPrompt(prompt, cwd);
       for (const a of attachments) console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}`));
       for (const e of errors) console.log(red(`⏺ ${e}`));
+      spinner.busy("Thinking");
       await agent.run(prompt, controller.signal, attachments);
     }
   } catch (err) {
     console.error(red(String(err)));
   } finally {
+    spinner.idle();
     md?.end();
     current = undefined;
   }
