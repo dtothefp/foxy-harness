@@ -26,7 +26,7 @@ bun src/cli.ts --provider bedrock     # codex | bedrock | anthropic
 
 Sessions resume with Claude Code's flags. `--continue` (`-c`) picks up the newest session in the current directory. `--resume <id>` (`-r`) picks up a given one, and an id prefix is enough. `--resume` alone lists this directory's recent sessions to pick from. `--session-id <uuid>` starts a new session with that id. A resumed session keeps its provider and model and prints its last exchange. Sessions are per directory, so each git worktree has its own.
 
-Session managers like Agent of Empires, Orca and Paseo drive Claude Code and Codex through these same flags. Point one at `foxy-harness --continue` and relaunching a pane picks up where it left off.
+Session managers like Agent of Empires, Orca and Paseo drive Claude Code and Codex through these same flags. Point one at `foxy-harness --continue` and relaunching a pane picks up where it left off. The terminal title also follows Claude Code's. `⠋ foxy-harness` while working, `✋` while a permission question waits, `✳` when idle. Tools that read pane titles use that to show which agents need you.
 
 `/model <name>` switches models mid-session within the same provider (`/model gpt-5.4`, `/model opus`). `/model` alone shows the current one. `foxy-harness models` lists what your ChatGPT plan can use.
 
@@ -86,6 +86,20 @@ Every edit shows a red/green diff and asks before writing. Every bash command as
 
 Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step, along with the directory it ran in. The banner shows the id.
 
+## Hooks
+
+Shell command hooks use Claude Code's format, in a `hooks` block in `~/.foxy-harness/settings.json` or `.foxy-harness/settings.json` in the launch directory. Claude Code's own settings aren't read for hooks, since those scripts expect Claude Code.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{ "matcher": "bash", "hooks": [{ "type": "command", "command": "./scripts/check.sh" }] }]
+  }
+}
+```
+
+Events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, PreCompact, Stop and SessionEnd. Each command gets JSON on stdin with Claude Code's field names (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `prompt` and so on). Tool names are foxy-harness's own (`bash`, `read_file`, `apply_patch`, `edit_file`), and matchers are regexes, case-insensitive. Exit 2 blocks the prompt, tool call or compaction with stderr as the reason. Exit 0 can print JSON with `decision: "block"`, a PreToolUse `permissionDecision: "deny"`, or `hookSpecificOutput.additionalContext`. Plain stdout from UserPromptSubmit is added to the prompt. Hooks for one event run in parallel with a 60 second default timeout (`timeout` in seconds). `FOXY_PROJECT_DIR` and `CLAUDE_PROJECT_DIR` are set to the launch directory. Notification fires with `notification_type: "permission_prompt"` when a permission question waits on you.
+
 ## Context and compaction
 
 Each step's footer shows how full the context window is. Two stages keep a long session under the limit.
@@ -115,7 +129,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - Edit tools only `plan`. They return `FileChange[]` (before/after per file). The agent passes that to the PreToolUse hook for the diff prompt, then writes it with `src/tools/changes.ts`.
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.
 - `src/tools/edit-file.ts` is exact string replace for Claude (same shape as Claude Code's Edit).
-- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/sessions.ts` finds and loads saved sessions for `--continue` and `--resume`. `src/spinner.ts` draws the status line for quiet stretches. `src/keys.ts` decodes modified keys like Shift+Enter before readline sees them.
+- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/command-hooks.ts` runs shell hooks from settings.json. `src/sessions.ts` finds and loads saved sessions for `--continue` and `--resume`. `src/spinner.ts` draws the status line for quiet stretches. `src/keys.ts` decodes modified keys like Shift+Enter before readline sees them.
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Images and PDFs come back as attachments, office documents as text (`src/attachments.ts`).
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.

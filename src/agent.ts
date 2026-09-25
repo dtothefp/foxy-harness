@@ -188,7 +188,7 @@ export class Agent {
     }
 
     const denied = await hooks.emit({ type: "PreToolUse", tool: name, input, callId, changes });
-    if (denied.block) return { output: `Tool call denied by user: ${denied.block}` };
+    if (denied.block) return { output: `Tool call denied: ${denied.block}` };
 
     this.opts.onToolStart?.(name, input, changes);
     let result: ToolResult;

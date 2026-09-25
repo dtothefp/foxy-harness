@@ -2,8 +2,9 @@ import type { FileChange } from "./tools/types.ts";
 
 // Lifecycle events, named after the Claude Code hooks model:
 // SessionStart → UserPromptSubmit → [PreToolUse → tool → PostToolUse]* → Stop → SessionEnd
+// Notification fires when a permission question waits on the user.
 // PreCompact fires before a summary replaces the history (auto or /compact). Returning { block } skips it.
-// Handlers are in-process functions. Nothing runs unless something is registered.
+// Handlers are in-process functions. Shell command hooks from settings.json register through src/command-hooks.ts.
 
 export type HarnessEvent =
   | { type: "SessionStart"; sessionId: string; cwd: string; source: "startup" | "resume" }
@@ -12,6 +13,8 @@ export type HarnessEvent =
   | { type: "PreToolUse"; tool: string; input: unknown; callId: string; changes?: FileChange[] }
   | { type: "PostToolUse"; tool: string; input: unknown; output: string; ok: boolean; changes?: FileChange[] }
   | { type: "PreCompact"; trigger: "auto" | "manual" }
+  // The user is being asked something mid-turn, so a session manager can flag the agent as waiting.
+  | { type: "Notification"; message: string; notificationType: "permission_prompt" }
   | { type: "Stop"; reason: "end_turn" | "max_steps" | "interrupted" | "error"; error?: string }
   | { type: "SessionEnd"; sessionId: string };
 
