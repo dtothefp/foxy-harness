@@ -5,6 +5,9 @@ import { format } from "node:util";
 // its own transcript, so the panel stays put while you scroll back with the mouse wheel or PgUp/PgDn.
 // Leaving it prints the transcript to the normal screen, so it ends up in the terminal's scrollback.
 //
+// Asking for the wheel means the terminal sends drags here too instead of selecting text, so selection is
+// drawn here as well, like Claude Code does. Drag to select, double-click for a word. Letting go copies it.
+//
 // Everything written to stdout goes into the transcript. Readline does the line editing with its echo
 // muted, and the input is drawn here from its state.
 //
@@ -16,14 +19,20 @@ const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 // Synchronized output, so a redraw doesn't flicker in terminals that support it.
 const BEGIN = "\x1b[?2026h\x1b[?25l";
 const END = "\x1b[?25h\x1b[?2026l";
-// Alternate screen, plus mouse button reports in SGR format for the wheel.
-const ENTER = "\x1b[?1049h\x1b[?1000h\x1b[?1006h";
-const LEAVE = "\x1b[?1006l\x1b[?1000l\x1b[?1049l";
+// Alternate screen, plus mouse reports in SGR format for the wheel and for selecting (1002 adds drags).
+const ENTER = "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const LEAVE = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l";
 const at = (row: number, col = 1) => `\x1b[${row};${col}H`;
 const TOKENS = /(\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
 const SGR = /^\x1b\[[0-9;]*m$/;
 // Older lines are dropped past this.
 const MAX_LINES = 20000;
+// Two clicks this close together select a word.
+const DOUBLE_CLICK_MS = 400;
+
+// A cell in the transcript. Row counts wrapped rows from the top of the transcript, col from 0.
+type Cell = { row: number; col: number };
+export type Mouse = { button: number; x: number; y: number; release: boolean };
 
 export type InputView = {
   // Every line of the input, the one being edited last.
@@ -58,6 +67,15 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
   let pending: ReturnType<typeof setTimeout> | undefined;
   // Where the cursor goes in the panel, relative to its top.
   let caret = { row: 0, col: 0 };
+  // The selection, from where the drag started to where it is now.
+  let from: Cell | undefined;
+  let to: Cell | undefined;
+  let dragging = false;
+  let lastClick = { at: 0, row: -1, col: -1 };
+  // A short note in the hint line, like "Copied".
+  let flash = "";
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let viewSize = 0;
 
   const height = () => out.rows || 24;
   const width = () => out.columns || 80;
@@ -86,6 +104,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
         counts.splice(0, drop).reduce((a, b) => a + b, 0),
       );
       anchor -= drop;
+      clearSelection();
     }
   }
 
@@ -93,6 +112,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
   function allRows(): { rows: string[]; anchorRow: number } {
     if (wrappedAt !== width()) {
       wrappedAt = width();
+      clearSelection();
       rows = [];
       counts = [];
       for (const line of lines.slice(0, -1)) {
@@ -135,7 +155,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
     const first = Math.max(0, Math.min(caret.row - max + 1, input.length - max));
     caret = { row: caret.row - first + 2, col: caret.col };
     const rule = `\x1b[2m${"─".repeat(w)}\x1b[0m`;
-    const hint = scroll ? "scrolled back · PgDn or the wheel to return" : v.hint;
+    const hint = flash || (scroll ? "scrolled back · PgDn or the wheel to return" : v.hint);
     return [status(), rule, ...input.slice(first, first + max), rule, `\x1b[2m${hint}\x1b[0m`];
   }
 
@@ -152,8 +172,17 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
     scroll = Math.max(0, Math.min(scroll, follow));
     lastTop = follow;
     const top = follow - scroll;
+    viewSize = size;
+    const sel = ordered();
     let seq = BEGIN;
-    for (let r = 0; r < size; r++) seq += `${at(r + 1)}\x1b[2K${all[top + r] ?? ""}`;
+    for (let r = 0; r < size; r++) {
+      const i = top + r;
+      let row = all[i] ?? "";
+      if (sel && i >= sel[0].row && i <= sel[1].row) {
+        row = highlight(row, i === sel[0].row ? sel[0].col : 0, i === sel[1].row ? sel[1].col : Infinity);
+      }
+      seq += `${at(r + 1)}\x1b[2K${row}`;
+    }
     bottom.forEach((line, i) => (seq += `${at(size + 1 + i)}\x1b[2K${cut(line, width())}`));
     raw(`${seq}${at(size + 1 + caret.row, caret.col + 1)}${END}`);
   }
@@ -189,6 +218,101 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
 
   const panelSize = () => panel().length;
 
+  function clearSelection() {
+    from = to = undefined;
+    dragging = false;
+  }
+
+  // The selection with its start first, or nothing if there isn't one.
+  function ordered(): [Cell, Cell] | undefined {
+    if (!from || !to) return undefined;
+    return from.row < to.row || (from.row === to.row && from.col <= to.col) ? [from, to] : [to, from];
+  }
+
+  function note(text: string) {
+    flash = text;
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => ((flash = ""), draw()), 1500);
+    flashTimer.unref?.();
+  }
+
+  // The selected text. Rows wrapped from one line join back up, and each line loses its trailing spaces.
+  function selectedText(): string {
+    const sel = ordered();
+    if (!sel) return "";
+    const { rows: all } = allRows();
+    // Which rows start a line, so wrapped ones join without a newline.
+    const starts = new Set<number>();
+    let n = 0;
+    for (const c of counts) {
+      starts.add(n);
+      n += c;
+    }
+    starts.add(n);
+    let text = "";
+    for (let i = sel[0].row; i <= sel[1].row; i++) {
+      if (i > sel[0].row && starts.has(i)) text = `${text.trimEnd()}\n`;
+      text += cols(plain(all[i] ?? ""), i === sel[0].row ? sel[0].col : 0, i === sel[1].row ? sel[1].col : Infinity);
+    }
+    return text
+      .split("\n")
+      .map((l) => l.trimEnd())
+      .join("\n");
+  }
+
+  function copySelection() {
+    const text = selectedText();
+    if (!text.trim()) return clearSelection();
+    copy(text, raw);
+    note(`Copied ${text.length} characters`);
+  }
+
+  function mouse(e: Mouse) {
+    // Modifier bits (shift 4, alt 8, ctrl 16) don't change what a button does here.
+    const button = e.button & ~28;
+    if (button === 64) return tui.scroll(3);
+    if (button === 65) return tui.scroll(-3);
+    // Clicks on the panel aren't for the transcript.
+    const inView = e.y <= viewSize;
+    const { rows: all } = allRows();
+    const top = lastTop - scroll;
+    const cell = { row: top + Math.min(e.y, viewSize) - 1, col: e.x - 1 };
+    if (button === 0 && !e.release) {
+      if (!inView) return;
+      const now = performance.now();
+      const double = now - lastClick.at < DOUBLE_CLICK_MS && lastClick.row === cell.row && lastClick.col === cell.col;
+      lastClick = { at: now, ...cell };
+      if (double) {
+        const word = wordAt(plain(all[cell.row] ?? ""), cell.col);
+        if (word) {
+          from = { row: cell.row, col: word[0] };
+          to = { row: cell.row, col: word[1] };
+          dragging = false;
+          copySelection();
+          return draw();
+        }
+      }
+      from = to = cell;
+      dragging = true;
+      return draw();
+    }
+    // 32 is a drag with the left button held.
+    if (button === 32 && dragging) {
+      to = cell;
+      // Dragging past the edge scrolls.
+      if (e.y <= 1) return tui.scroll(1);
+      if (e.y >= viewSize) return tui.scroll(-1);
+      return draw();
+    }
+    if (button === 0 && e.release && dragging) {
+      dragging = false;
+      // A click without a drag clears the selection.
+      if (from && to && from.row === to.row && from.col === to.col) clearSelection();
+      else copySelection();
+      draw();
+    }
+  }
+
   function stop() {
     if (!active) return;
     active = false;
@@ -199,7 +323,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
     raw(text.endsWith("\n") || !text ? text : `${text}\n`);
   }
 
-  return {
+  const tui = {
     start() {
       if (!out.isTTY || active) return;
       active = true;
@@ -244,7 +368,91 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
       title("✋");
       draw();
     },
+    mouse,
+    // Typing drops the selection.
+    clearSelection() {
+      if (!from) return;
+      clearSelection();
+      draw();
+    },
   };
+  return tui;
+}
+
+// Puts text on the clipboard. pbcopy on a Mac, since tmux drops the terminal escape by default. Otherwise
+// OSC 52, which most terminals take.
+function copy(text: string, raw: (s: string) => boolean) {
+  if (process.platform === "darwin" && !process.env.SSH_CONNECTION) {
+    const proc = Bun.spawn(["pbcopy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+    proc.stdin.write(text);
+    proc.stdin.end();
+    return;
+  }
+  raw(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+}
+
+// A styled row without its styles.
+function plain(row: string): string {
+  return row
+    .split(TOKENS)
+    .filter((p) => p && p[0] !== "\x1b")
+    .join("");
+}
+
+// The characters of plain text in columns from..to, both included.
+function cols(text: string, from: number, to: number): string {
+  let out = "";
+  let col = 0;
+  for (const ch of text) {
+    if (col > to) break;
+    if (col >= from) out += ch;
+    col += Bun.stringWidth(ch);
+  }
+  return out;
+}
+
+// The columns of the word (a run without spaces) at a column, or nothing on a space.
+function wordAt(text: string, at: number): [number, number] | undefined {
+  const cells: { ch: string; col: number }[] = [];
+  let col = 0;
+  for (const ch of text) {
+    cells.push({ ch, col });
+    col += Bun.stringWidth(ch);
+  }
+  let i = cells.findIndex((c, k) => c.col <= at && (cells[k + 1]?.col ?? Infinity) > at);
+  if (i < 0 || /\s/.test(cells[i]!.ch)) return undefined;
+  let j = i;
+  while (i > 0 && !/\s/.test(cells[i - 1]!.ch)) i--;
+  while (j < cells.length - 1 && !/\s/.test(cells[j + 1]!.ch)) j++;
+  return [cells[i]!.col, cells[j]!.col];
+}
+
+// Draws columns from..to (both included) of a styled row in reverse video.
+function highlight(row: string, from: number, to: number): string {
+  let out = "";
+  let col = 0;
+  let on = false;
+  for (const part of row.split(TOKENS)) {
+    if (!part) continue;
+    if (part[0] === "\x1b") {
+      out += part;
+      // A reset inside the selection would end the reverse video early.
+      if (on && /^\x1b\[(0|27)?m$/.test(part)) out += "\x1b[7m";
+      continue;
+    }
+    for (const ch of part) {
+      if (!on && col >= from && col <= to) {
+        out += "\x1b[7m";
+        on = true;
+      } else if (on && col > to) {
+        out += "\x1b[27m";
+        on = false;
+      }
+      out += ch;
+      col += Bun.stringWidth(ch);
+    }
+  }
+  return on ? `${out}\x1b[27m` : out;
 }
 
 // Splits plain text into rows of at most `room` columns.
