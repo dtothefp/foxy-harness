@@ -284,8 +284,11 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     const controller = new AbortController();
     live.current = controller;
     const toolCallId = crypto.randomUUID();
-    const title = command.split("\n")[0];
-    update(live, { sessionUpdate: "tool_call", toolCallId, title, kind: "execute", status: "in_progress", rawInput: { command } });
+    // The same card as the agent's own bash calls, titled with the command.
+    update(live, {
+      ...toolCall("bash", { command, description: command.split("\n")[0] }, undefined, toolCallId, live.cwd),
+      status: "in_progress",
+    });
     try {
       const r = await userShell(live.agent, command, live.cwd, controller.signal);
       const output = r.ok ? r.output : `${r.output}\n[${r.status}]`.trim();
