@@ -40,7 +40,12 @@ Drag an image or PDF into the prompt (or type its path) and it's attached, so th
 
 `read_file` turns office documents into text. Word, RTF, ODT and web archives go through `textutil` (macOS only). Excel sheets come back as tab-separated rows and PowerPoint as text per slide. Other binary files are refused instead of read as garbage.
 
-Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. End a line with `\` to type a newline.
+Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. Shift+Enter, or a `\` at the end of a line, types a newline. Shift+Enter needs a terminal that reports modified keys (xterm's modifyOtherKeys, which Ghostty, kitty and WezTerm support). Inside tmux, turn on extended keys.
+
+```
+set -g extended-keys on
+set -as terminal-features ',xterm-ghostty:extkeys'
+```
 
 ## Configuration
 
@@ -73,7 +78,7 @@ Without `--provider`, the harness picks Bedrock if `CLAUDE_CODE_USE_BEDROCK=1`, 
 
 Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gateways are.
 
-Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` (or `HARNESS_YOLO=1`) skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn.
+Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` (or `HARNESS_YOLO=1`) skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn. At the prompt it clears what's typed, and on an empty prompt it exits.
 
 Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step.
 
@@ -106,7 +111,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - Edit tools only `plan`. They return `FileChange[]` (before/after per file). The agent passes that to the PreToolUse hook for the diff prompt, then writes it with `src/tools/changes.ts`.
 - `src/tools/apply-patch.ts` is Codex's patch format, ported from `codex-rs/apply-patch`. Changes are found by context lines with a whitespace/unicode fuzz ladder, and the whole patch applies or none of it does.
 - `src/tools/edit-file.ts` is exact string replace for Claude (same shape as Claude Code's Edit).
-- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/spinner.ts` draws the status line for quiet stretches.
+- `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/spinner.ts` draws the status line for quiet stretches. `src/keys.ts` decodes modified keys like Shift+Enter before readline sees them.
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Images and PDFs come back as attachments, office documents as text (`src/attachments.ts`).
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.

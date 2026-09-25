@@ -1,3 +1,5 @@
+import { format } from "node:util";
+
 // A status line for quiet stretches of a turn. It sits on its own line with elapsed seconds and is
 // erased the moment anything else prints, so it can stay armed for the whole turn. busy() shows it after
 // `after` ms (right away while waiting on the model). Once something has printed, it comes back only
@@ -42,6 +44,14 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
       }
       return original(chunk, ...rest);
     }) as typeof out.write;
+    // Bun's console.log writes to the fd directly, not through stdout.write. Send it through, and clear
+    // the line before anything goes to stderr on the same terminal.
+    console.log = (...args: unknown[]) => void out.write(`${format(...args)}\n`);
+    const error = console.error.bind(console);
+    console.error = (...args: unknown[]) => {
+      clear();
+      error(...args);
+    };
     setInterval(tick, 100).unref();
     process.on("exit", clear);
   }
