@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
+import { runAcp } from "./acp.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
@@ -64,6 +65,9 @@ const config = await loadConfig();
 const yolo = yoloFlag || config.get("HARNESS_YOLO") === "1";
 const modelFlag = option("--model");
 const providerFlag = option("--provider");
+
+// Agent Client Protocol over stdio, for editors and session managers that speak it (Zed, Paseo).
+if (flag("--acp")) await runAcp(config, { provider: providerFlag, model: modelFlag, yolo });
 
 if (args[0] === "login") {
   await login();

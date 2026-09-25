@@ -27,8 +27,9 @@ export type AgentOptions = {
   fakeTools?: ToolSpec[];
   onText?: (delta: string) => void;
   onReasoning?: (summary: string) => void;
-  onToolStart?: (name: string, input: unknown, changes?: FileChange[]) => void;
-  onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string, input: unknown) => void;
+  // callId is the model's id for the call, the same one PreToolUse carries.
+  onToolStart?: (name: string, input: unknown, changes: FileChange[] | undefined, callId: string) => void;
+  onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string, input: unknown, callId: string) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
   onCompact?: (info: CompactInfo) => void;
 };
@@ -176,7 +177,7 @@ export class Agent {
     const args = input as Record<string, unknown>;
     const ctx = { cwd, signal };
     const tool = this.opts.tools.find((t) => t.spec.name === name);
-    if (!tool) return this.finish(name, input, { output: `Unknown tool: ${name}`, ok: false });
+    if (!tool) return this.finish(callId, name, input, { output: `Unknown tool: ${name}`, ok: false });
 
     // Edit tools plan first, so hooks and the UI can show the diff before anything is written.
     let changes: FileChange[] | undefined;
@@ -184,26 +185,26 @@ export class Agent {
       try {
         changes = await tool.plan(args, ctx);
       } catch (err) {
-        return this.finish(name, input, { output: errorText(err), ok: false });
+        return this.finish(callId, name, input, { output: errorText(err), ok: false });
       }
     }
 
     const denied = await hooks.emit({ type: "PreToolUse", tool: name, input, callId, changes });
     if (denied.block) return { output: `Tool call denied: ${denied.block}` };
 
-    this.opts.onToolStart?.(name, input, changes);
+    this.opts.onToolStart?.(name, input, changes, callId);
     let result: ToolResult;
     try {
       result = "plan" in tool ? { output: await applyChanges(changes!, cwd), ok: true } : await tool.run(args, ctx);
     } catch (err) {
       result = { output: errorText(err), ok: false };
     }
-    return this.finish(name, input, result, changes, true);
+    return this.finish(callId, name, input, result, changes, true);
   }
 
-  private async finish(name: string, input: unknown, r: ToolResult, changes?: FileChange[], started = false) {
-    if (!started) this.opts.onToolStart?.(name, input);
-    this.opts.onToolEnd?.(r.output, r.ok, changes, name, input);
+  private async finish(callId: string, name: string, input: unknown, r: ToolResult, changes?: FileChange[], started = false) {
+    if (!started) this.opts.onToolStart?.(name, input, undefined, callId);
+    this.opts.onToolEnd?.(r.output, r.ok, changes, name, input, callId);
     const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
     // Context is kept separately too, so clearing an old result doesn't drop package instructions.
     const attachments = r.attachments?.length ? r.attachments : undefined;
