@@ -11,6 +11,7 @@ import { ago, describeSession, findSession, type Session, shortModel } from "./i
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider, Usage } from "./providers/types.ts";
+import { keyInput } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
 import { renderChanges } from "./render.ts";
 import { toolsFor } from "./tools/index.ts";
@@ -104,7 +105,8 @@ if (args[0] === "last") {
 
 const cwd = process.cwd();
 const sessionId = crypto.randomUUID();
-const rl = createInterface({ input: process.stdin, output: process.stdout });
+const input = keyInput(process.stdin);
+const rl = createInterface({ input, output: process.stdout, terminal: process.stdin.isTTY });
 const hooks = new Hooks();
 
 function makeProvider(model = modelArg): Provider {
@@ -127,8 +129,11 @@ const tools = toolsFor(provider.name);
 const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
 watchPackages(hooks, cwd, { instructions, skills }, (what) => console.log(dim(`⏺ Loaded ${what}`)));
 
+// The running turn. ctrl+c aborts it, which also cancels a permission question it's waiting on.
+let current: AbortController | undefined;
+
 async function ask(question: string) {
-  const answer = (await rl.question(dim(`${question} [Y/n/reason] `))).trim();
+  const answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
   if (answer === "" || /^y(es)?$/i.test(answer)) return;
   return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
 }
@@ -219,7 +224,7 @@ let pasting = false;
 if (process.stdin.isTTY) {
   process.stdout.write("\x1b[?2004h");
   process.on("exit", () => process.stdout.write("\x1b[?2004l"));
-  process.stdin.on("keypress", (_s, key?: { name?: string }) => {
+  input.on("keypress", (_s, key?: { name?: string }) => {
     if (key?.name === "paste-start") pasting = true;
     if (key?.name === "paste-end") pasting = false;
   });
@@ -248,8 +253,7 @@ function readPrompt(): Promise<string> {
 
 async function turn(prompt: string) {
   const controller = new AbortController();
-  const onSigint = () => controller.abort();
-  process.once("SIGINT", onSigint);
+  current = controller;
   try {
     if (prompt === "/model" || prompt.startsWith("/model ")) {
       const name = prompt.slice("/model".length).trim();
@@ -270,7 +274,7 @@ async function turn(prompt: string) {
     console.error(red(String(err)));
   } finally {
     md?.end();
-    process.off("SIGINT", onSigint);
+    current = undefined;
   }
 }
 
@@ -280,7 +284,16 @@ if (oneShot) {
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, end a line with \\ for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  // In raw mode ctrl+c is a keypress, so readline gets it, not the process. During a turn it aborts
+  // the turn. At the prompt it clears what's typed, and on an empty prompt it exits.
+  rl.on("SIGINT", () => {
+    if (current) return current.abort();
+    if (!rl.line) return rl.close();
+    rl.write(null, { ctrl: true, name: "e" });
+    rl.write(null, { ctrl: true, name: "u" });
+  });
+  process.on("SIGINT", () => current?.abort());
   rl.on("close", async () => {
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);
