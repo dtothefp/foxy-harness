@@ -50,7 +50,8 @@ export function chooseProvider(config: Config, flags: { provider?: string; model
 
 // A name defined with HARNESS_MODEL_<NAME> becomes what it stands for. Anything else passes through.
 export function expandModel<T extends string | undefined>(config: Config, name: T): T | string {
-  return (name && config.aliases[name.toLowerCase()]) || name;
+  // Env var names can't have dashes or dots, so `sonnet-4.6` finds HARNESS_MODEL_SONNET_4_6.
+  return (name && config.aliases[name.toLowerCase().replace(/[^a-z0-9]/g, "_")]) || name;
 }
 
 export function makeProvider(config: Config, choice: ProviderChoice, sessionId: string): Provider {

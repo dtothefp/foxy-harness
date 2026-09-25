@@ -37,7 +37,9 @@ export HARNESS_MODEL_OPUS5="arn:aws:bedrock:<region>:<account>:application-infer
 export HARNESS_MODEL_OPUS46="arn:aws:bedrock:<region>:<account>:application-inference-profile/<id>"
 ```
 
-Then `/model opus46` switches mid-session, and `--model opus5` or `HARNESS_MODEL=opus5` picks one at start. Names are case-insensitive. `/model` alone lists them.
+Then `/model opus46` switches mid-session, and `--model opus5` or `HARNESS_MODEL=opus5` picks one at start. Names are case-insensitive, and dashes or dots match underscores, so `sonnet-4.6` finds `HARNESS_MODEL_SONNET_4_6`. `/model` alone lists them.
+
+`foxy-harness envrc` adds those two exports with empty values to `~/.envrc` for [direnv](https://direnv.net). `foxy-harness envrc opus5 sonnet-4.6` picks the names. Names already there are skipped. Fill in the values and run `direnv allow ~`.
 
 `bun link` once puts a `foxy-harness` command on your PATH, so you can run it from any repo.
 
@@ -174,6 +176,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
 - `src/bootstrap.ts` sets up a session (provider, tools, instructions, skills, command hooks, the agent) for any frontend. `src/cli.ts` is the terminal frontend and `src/acp.ts` the ACP one. It supplies the rendering callbacks and the permission prompt.
+- `src/envrc.ts` is `foxy-harness envrc`, which adds empty model exports to `~/.envrc`.
 - `src/aoe.ts` is `foxy-harness aoe`, which sets up Agent of Empires' config and tmux.conf for the harness and checks the result with aoe.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
 - `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
