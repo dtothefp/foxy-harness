@@ -397,6 +397,7 @@ if (process.stdin.isTTY) {
     // PgUp/PgDn scroll back through the output. Typing anything else jumps back to the bottom.
     if (key?.name === "pageup") return tui.scroll(tui.page());
     if (key?.name === "pagedown") return tui.scroll(-tui.page());
+    tui.clearSelection();
     tui.scroll(-Infinity);
   });
 }
@@ -538,8 +539,8 @@ if (oneShot) {
   if (process.stdin.isTTY && process.stdout.isTTY && config.get("HARNESS_FULLSCREEN") !== "0") {
     screen.muted = true;
     tui.start();
-    // The wheel scrolls three rows at a time.
-    onMouse((e) => (e.button === 64 ? tui.scroll(3) : e.button === 65 ? tui.scroll(-3) : undefined));
+    // The wheel scrolls, and a drag selects and copies.
+    onMouse(tui.mouse);
   }
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
