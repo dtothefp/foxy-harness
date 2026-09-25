@@ -40,6 +40,10 @@ Claude requests ask for adaptive thinking with summaries (`display: "summarized"
 
 `foxy-harness last` prints a short summary of the newest session. Provider, model, effort and thinking settings, then per step what came back (thinking shown or hidden, text length, tool calls) and token counts. `foxy-harness last <id-prefix>` picks a session. `/session` in the REPL prints the same for the current one. Inference profile ARNs are shortened so the account id doesn't show.
 
+`foxy-harness transcript <id-prefix>` prints a session as plain text (images as their names, tool calls one line each, oldest turns cut past `--max` characters, 60k by default). `foxy-harness transcript --list` shows recent sessions. The agent knows both, so in a new session you can say "pick up session 21f5" and it reads the old one through bash. Use it when a session won't resume.
+
+When a Claude endpoint answers 200 with no reply, the harness retries once, then resends without the images from earlier turns and keeps them out for the rest of the session. If that still fails, the error shows the request size, image count and response headers.
+
 Drag an image or PDF into the prompt (or type its path) and it's attached, so the model sees it. `read_file` opens them too, so the model can look at a screenshot path on its own. Images are PNG, JPEG, GIF, WebP and HEIC. On macOS, images over 1568px or 3.5 MB and HEIC photos are converted with `sips` first. PDFs go up to 20 MB and 100 pages, and Claude reads both the text and the page images. macOS screenshot names have a special space before AM/PM, and paths typed with a plain space still match.
 
 `read_file` turns office documents into text. Word, RTF, ODT and web archives go through `textutil` (macOS only). Excel sheets come back as tab-separated rows and PowerPoint as text per slide. Other binary files are refused instead of read as garbage.

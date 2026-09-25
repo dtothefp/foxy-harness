@@ -60,7 +60,7 @@ export class Agent {
     const last = messages.findLastIndex((m) => m.role === "assistant" && m.usage?.inputTokens != null);
     const usage = last >= 0 && messages[last]!.role === "assistant" ? messages[last]!.usage : undefined;
     const base = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : estimateTokens(this.opts.system.length);
-    this.contextTokens = base + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(JSON.stringify(m).length), 0);
+    this.contextTokens = base + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(messageChars(m)), 0);
   }
 
   get contextWindow() {
@@ -255,6 +255,7 @@ Guidelines:
 - Explore before editing. Prefer rg and fd if installed.
 - Read a file before editing it. Make small targeted edits, never rewrite a whole file to change a few lines.
 - Run the project's tests or typecheck after changes when they exist.
+- To read an earlier foxy-harness session (to pick up its work), run \`foxy-harness transcript --list\`, then \`foxy-harness transcript <id>\`.
 
 Communication:
 - The user watches you work in a terminal. Before each group of tool calls, write one short line (under 15 words) on what you're doing and why, e.g. "Checking how config is loaded before adding the flag." Skip it for obvious follow-ups.
@@ -272,6 +273,11 @@ ${formatSkills(skills)}`;
 }
 
 const charsOf = (a: Attachment[] = []) => a.reduce((n, x) => n + attachmentChars(x), 0);
+// Attachments count by what the model sees, not by their base64 size.
+const messageChars = (m: Message) =>
+  "attachments" in m && m.attachments
+    ? JSON.stringify({ ...m, attachments: undefined }).length + charsOf(m.attachments)
+    : JSON.stringify(m).length;
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

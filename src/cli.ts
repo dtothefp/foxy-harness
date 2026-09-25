@@ -8,7 +8,8 @@ import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
 import { attachmentsInPrompt } from "./attachments.ts";
 import { ago, describeSession, shortModel } from "./inspect.ts";
-import { findSession, loadSession, type Session, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
+import { transcript } from "./transcript.ts";
+import { findSession, loadSession, type Session, sessionFiles, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
 import { listModels } from "./providers/codex.ts";
 import type { Usage } from "./providers/types.ts";
 import { keyInput } from "./keys.ts";
@@ -107,6 +108,29 @@ if (args[0] === "last") {
   }
   const session = (await Bun.file(found.path).json()) as Session;
   console.log(describeSession(session, `session ${found.id.slice(0, 8)} · ${ago(found.mtime)}`));
+  process.exit(0);
+}
+
+// `foxy-harness transcript [id-prefix] [--max chars]` prints a session as plain text, to carry its context
+// into another session. `--list` shows recent sessions.
+if (args[0] === "transcript") {
+  const rest = args.slice(1);
+  if (rest.includes("--list")) {
+    for (const f of (await sessionFiles()).slice(0, 20)) {
+      const s = await loadSession(f.path).catch(() => undefined);
+      if (s) console.log(`${f.id.slice(0, 8)}  ${ago(f.mtime).padEnd(12)}  ${sessionTitle(s).slice(0, 80)}`);
+    }
+    process.exit(0);
+  }
+  const maxAt = rest.indexOf("--max");
+  const max = maxAt >= 0 ? Number(rest[maxAt + 1]) : undefined;
+  const prefix = rest.find((a, i) => !a.startsWith("--") && i !== maxAt + 1);
+  const found = await findSession(prefix);
+  if (!found) {
+    console.error(red(prefix ? `No session starting with ${prefix}.` : "No saved sessions."));
+    process.exit(1);
+  }
+  console.log(transcript(found.id, await loadSession(found.path), max || undefined));
   process.exit(0);
 }
 
