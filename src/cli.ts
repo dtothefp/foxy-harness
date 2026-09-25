@@ -7,7 +7,8 @@ import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
 import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
 import { attachmentsInPrompt } from "./attachments.ts";
-import { ago, describeSession, findSession, type Session, shortModel } from "./inspect.ts";
+import { ago, describeSession, shortModel } from "./inspect.ts";
+import { findSession, loadSession, providerFamily, type Session, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider, listModels } from "./providers/codex.ts";
 import type { Provider, Usage } from "./providers/types.ts";
@@ -36,31 +37,37 @@ const describe = (input: unknown) => {
 const spinner = createSpinner();
 
 const args = process.argv.slice(2);
-const flag = (name: string) => {
-  const i = args.indexOf(name);
+const flag = (...names: string[]) => {
+  const i = args.findIndex((a) => names.includes(a));
   return i >= 0 ? args.splice(i, 1) && true : false;
 };
-const option = (name: string) => {
-  const i = args.indexOf(name);
+const option = (...names: string[]) => {
+  const i = args.findIndex((a) => names.includes(a));
   return i >= 0 ? args.splice(i, 2)[1] : undefined;
+};
+// A flag with an optional value, like Claude Code's --resume [id]. The value is taken only if it looks like
+// a session id, so `--resume "fix the tests"` still reads the prompt.
+const optionalOption = (...names: string[]) => {
+  const i = args.findIndex((a) => names.includes(a));
+  if (i < 0) return undefined;
+  const value = /^[0-9a-f][0-9a-f-]{3,}$/i.test(args[i + 1] ?? "") ? args[i + 1]! : "";
+  args.splice(i, value ? 2 : 1);
+  return value;
 };
 
 const yoloFlag = flag("--yolo");
 const demoUnknownTool = flag("--demo-unknown-tool");
+// Same flags as Claude Code. --continue resumes the newest session in this directory, --resume <id> a
+// given one (an id prefix is enough), --resume alone lists this directory's sessions to pick from.
+// --session-id starts a new session with a set id, for tools that track sessions by id.
+const continueFlag = flag("--continue", "-c");
+const resumeArg = optionalOption("--resume", "-r");
+const sessionIdArg = option("--session-id");
 const config = await loadConfig();
 // Skip permission prompts. HARNESS_YOLO=1 makes it the default, like Claude Code's bypassPermissions mode.
 const yolo = yoloFlag || config.get("HARNESS_YOLO") === "1";
-const modelArg = option("--model") ?? config.get("HARNESS_MODEL");
-// codex | bedrock | anthropic. Without a flag: Bedrock if Claude Code is set up for it, the Anthropic API
-// if a Claude model was asked for, else Codex over the ChatGPT login.
-const providerName =
-  option("--provider") ??
-  config.get("HARNESS_PROVIDER") ??
-  (config.get("CLAUDE_CODE_USE_BEDROCK") === "1"
-    ? "bedrock"
-    : /^(claude|opus|sonnet|haiku|arn:)/i.test(modelArg ?? "")
-      ? "anthropic"
-      : "codex");
+const modelFlag = option("--model");
+const providerFlag = option("--provider");
 
 if (args[0] === "login") {
   await login();
@@ -84,10 +91,72 @@ if (args[0] === "last") {
 }
 
 const cwd = process.cwd();
-const sessionId = crypto.randomUUID();
 const input = keyInput(process.stdin);
 const rl = createInterface({ input, output: process.stdout, terminal: process.stdin.isTTY });
 const hooks = new Hooks();
+
+const resumed = await resumeTarget();
+const sessionId = resumed?.id ?? sessionIdArg ?? crypto.randomUUID();
+
+let modelArg = modelFlag ?? config.get("HARNESS_MODEL");
+// codex | bedrock | anthropic. Without a flag: Bedrock if Claude Code is set up for it, the Anthropic API
+// if a Claude model was asked for, else Codex over the ChatGPT login.
+let providerName =
+  providerFlag ??
+  config.get("HARNESS_PROVIDER") ??
+  (config.get("CLAUDE_CODE_USE_BEDROCK") === "1"
+    ? "bedrock"
+    : /^(claude|opus|sonnet|haiku|arn:)/i.test(modelArg ?? "")
+      ? "anthropic"
+      : "codex");
+// A resumed session keeps its provider and model unless flags say otherwise.
+if (resumed) {
+  const { provider: saved, model } = resumed.session;
+  if (providerFamily(saved, model) !== providerFamily(providerName)) {
+    if (providerFlag) exit(`That session ran on ${saved ?? "codex"}. Its history can't move to ${providerName}.`);
+    providerName = saved ?? "codex";
+  }
+  if (!modelFlag && (!saved || saved === providerName)) modelArg = model;
+}
+
+function exit(message: string): never {
+  console.error(red(message));
+  process.exit(1);
+}
+
+// The session --continue, --resume or --session-id points at, if any.
+async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Date } | undefined> {
+  if (sessionIdArg) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionIdArg)) exit("--session-id must be a UUID.");
+    if (await Bun.file(sessionPath(sessionIdArg)).exists()) exit(`Session ${sessionIdArg} is already in use. Use --resume to pick it up.`);
+    return;
+  }
+  if (continueFlag) {
+    const [latest] = await sessionsIn(cwd, 1);
+    if (!latest) console.log(dim("No earlier session in this directory, starting a new one."));
+    return latest;
+  }
+  if (resumeArg === undefined) return;
+  if (resumeArg) {
+    const found = await findSession(resumeArg);
+    if (!found) exit(`No session starting with ${resumeArg}.`);
+    return { ...found, session: await loadSession(found.path) };
+  }
+  const recent = await sessionsIn(cwd, 10);
+  if (!recent.length) {
+    console.log(dim("No earlier sessions in this directory, starting a new one."));
+    return;
+  }
+  if (!process.stdin.isTTY) exit("--resume without an id needs a terminal to pick from. Pass an id.");
+  recent.forEach((r, i) => {
+    const turns = r.session.messages.filter((m) => m.role === "user").length;
+    console.log(`${cyan(String(i + 1).padStart(2))}  ${dim(`${ago(r.mtime).padEnd(12)} ${r.id.slice(0, 8)}  ${turns} turn${turns === 1 ? "" : "s"}`)}  ${sessionTitle(r.session).slice(0, 60)}`);
+  });
+  const answer = (await rl.question(dim(`Resume which? [1] `))).trim() || "1";
+  const pick = recent[Number(answer) - 1];
+  if (!pick) exit(`No session ${answer}.`);
+  return pick;
+}
 
 function makeProvider(model = modelArg): Provider {
   if (providerName === "codex") return codexProvider(model ?? "gpt-5.5", sessionId, config.get("HARNESS_EFFORT"));
@@ -102,8 +171,7 @@ let provider: Provider;
 try {
   provider = makeProvider();
 } catch (err) {
-  console.error(red(err instanceof Error ? err.message : String(err)));
-  process.exit(1);
+  exit(err instanceof Error ? err.message : String(err));
 }
 const tools = toolsFor(provider.name);
 const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
@@ -203,7 +271,8 @@ const agent = new Agent({
   },
 });
 
-await hooks.emit({ type: "SessionStart", sessionId, cwd });
+if (resumed) agent.restore(resumed.session.messages);
+await hooks.emit({ type: "SessionStart", sessionId, cwd, source: resumed ? "resume" : "startup" });
 
 // Bracketed paste. The terminal wraps pasted text in markers (readline reports them as paste-start and
 // paste-end keypresses), so newlines inside a paste don't submit. Enter after the paste does.
@@ -268,13 +337,31 @@ async function turn(prompt: string) {
   }
 }
 
+// The last exchange of a resumed session, so it's clear where things left off.
+function showRecap(session: Session, mtime: Date) {
+  const turns = session.messages.filter((m) => m.role === "user");
+  const lastPrompt = turns.at(-1);
+  const lastReply = session.messages.findLast((m) => m.role === "assistant" && m.text.trim());
+  console.log(dim(`\n⏺ Resumed session from ${ago(mtime)}, ${turns.length} turn${turns.length === 1 ? "" : "s"}. Last exchange`));
+  if (lastPrompt?.role === "user") console.log(`${cyan("›")} ${lastPrompt.text.trim().split("\n")[0]}`);
+  if (lastReply?.role === "assistant") {
+    const lines = lastReply.text.trim().split("\n");
+    const shown = lines.slice(0, 8).join("\n") + (lines.length > 8 ? `\n… ${lines.length - 8} more lines` : "");
+    if (md) {
+      md.push(`${shown}\n`);
+      md.end();
+    } else console.log(shown);
+  }
+}
+
 const oneShot = args.join(" ").trim();
 if (oneShot) {
   await turn(oneShot);
 } else {
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
-  console.log(dim(`foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  console.log(dim(`foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, ctrl+c interrupts a turn, ctrl+d exits`));
+  if (resumed) showRecap(resumed.session, resumed.mtime);
   // In raw mode ctrl+c is a keypress, so readline gets it, not the process. During a turn it aborts
   // the turn. At the prompt it clears what's typed, and on an empty prompt it exits.
   rl.on("SIGINT", () => {

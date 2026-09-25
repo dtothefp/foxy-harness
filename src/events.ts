@@ -6,7 +6,7 @@ import type { FileChange } from "./tools/types.ts";
 // Handlers are in-process functions. Nothing runs unless something is registered.
 
 export type HarnessEvent =
-  | { type: "SessionStart"; sessionId: string; cwd: string }
+  | { type: "SessionStart"; sessionId: string; cwd: string; source: "startup" | "resume" }
   | { type: "UserPromptSubmit"; prompt: string }
   // `changes` is set for edit tools: the planned file writes, so a hook can show the diff before approving.
   | { type: "PreToolUse"; tool: string; input: unknown; callId: string; changes?: FileChange[] }

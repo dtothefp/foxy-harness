@@ -52,6 +52,15 @@ export class Agent {
     this.opts.provider = p;
   }
 
+  // Picks up a saved history. The context size is the last call's usage plus estimates for what came after.
+  restore(messages: Message[]) {
+    this.messages = messages;
+    const last = messages.findLastIndex((m) => m.role === "assistant" && m.usage?.inputTokens != null);
+    const usage = last >= 0 && messages[last]!.role === "assistant" ? messages[last]!.usage : undefined;
+    const base = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : estimateTokens(this.opts.system.length);
+    this.contextTokens = base + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(JSON.stringify(m).length), 0);
+  }
+
   get contextWindow() {
     return this.opts.contextWindow ?? this.opts.provider.contextWindow;
   }
