@@ -38,6 +38,8 @@ type Live = {
   agent: Agent;
   hooks: Hooks;
   current?: AbortController;
+  // The running turn, resolving to its stop reason. A prompt sent mid-turn waits on it too.
+  running?: Promise<string>;
   // How the last turn ended, from the Stop event.
   stop: string;
   // Chunks of one model reply share an id. A new step starts a new one.
@@ -247,30 +249,42 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
 
     "session/prompt": async ({ sessionId, prompt }) => {
       const live = get(sessionId);
-      if (live.current) throw new RpcError(-32600, "A turn is already running in this session");
       const { text, attachments } = await toPrompt(prompt ?? [], live.cwd);
-      const controller = new AbortController();
-      live.current = controller;
-      live.stop = "end_turn";
-      try {
-        await live.agent.run(text, controller.signal, attachments);
-      } catch (err) {
-        if (!controller.signal.aborted) throw new RpcError(-32603, err instanceof Error ? err.message : String(err));
-      } finally {
-        live.current = undefined;
-        live.messageId = undefined;
+      // A prompt sent mid-turn steers the running turn rather than starting a second one. The model gets it at
+      // the next step, and this request ends with the turn it joined.
+      if (live.running) {
+        live.agent.steer(text, attachments);
+        return { stopReason: await live.running };
       }
-      update(live, {
-        sessionUpdate: "session_info_update",
-        title: sessionTitle(live.agent.snapshot()).slice(0, 100),
-        updatedAt: new Date().toISOString(),
-      });
-      return { stopReason: controller.signal.aborted ? "cancelled" : live.stop === "max_steps" ? "max_turn_requests" : "end_turn" };
+      live.running = runTurn(live, text, attachments).finally(() => (live.running = undefined));
+      return { stopReason: await live.running };
     },
     "session/cancel": async ({ sessionId }) => {
       sessions.get(sessionId)?.current?.abort();
     },
   };
+
+  async function runTurn(live: Live, text: string, attachments: Attachment[] | undefined): Promise<string> {
+    const controller = new AbortController();
+    live.current = controller;
+    live.stop = "end_turn";
+    try {
+      await live.agent.run(text, controller.signal, attachments);
+    } catch (err) {
+      if (!controller.signal.aborted) throw new RpcError(-32603, err instanceof Error ? err.message : String(err));
+    } finally {
+      live.current = undefined;
+      live.messageId = undefined;
+      // Cancelled before the model saw them. The client shows them as sent, so they end with the turn.
+      live.agent.takeQueued();
+    }
+    update(live, {
+      sessionUpdate: "session_info_update",
+      title: sessionTitle(live.agent.snapshot()).slice(0, 100),
+      updatedAt: new Date().toISOString(),
+    });
+    return controller.signal.aborted ? "cancelled" : live.stop === "max_steps" ? "max_turn_requests" : "end_turn";
+  }
 
   const rl = createInterface({ input: process.stdin });
   rl.on("line", async (line) => {
