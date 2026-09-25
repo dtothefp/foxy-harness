@@ -28,7 +28,7 @@ export type ProviderChoice = { provider: string; model?: string };
 // provider and model unless flags say otherwise. Throws when the flags ask for a provider the history
 // can't move to.
 export function chooseProvider(config: Config, flags: { provider?: string; model?: string }, resumed?: Session): ProviderChoice {
-  let model = flags.model ?? config.get("HARNESS_MODEL");
+  let model = expandModel(config, flags.model ?? config.get("HARNESS_MODEL"));
   let provider =
     flags.provider ??
     config.get("HARNESS_PROVIDER") ??
@@ -48,12 +48,20 @@ export function chooseProvider(config: Config, flags: { provider?: string; model
   return { provider, model };
 }
 
-export function makeProvider(config: Config, { provider, model }: ProviderChoice, sessionId: string): Provider {
+// A name defined with HARNESS_MODEL_<NAME> becomes what it stands for. Anything else passes through.
+export function expandModel<T extends string | undefined>(config: Config, name: T): T | string {
+  // Env var names can't have dashes or dots, so `sonnet-4.6` finds HARNESS_MODEL_SONNET_4_6.
+  return (name && config.aliases[name.toLowerCase().replace(/[^a-z0-9]/g, "_")]) || name;
+}
+
+export function makeProvider(config: Config, choice: ProviderChoice, sessionId: string): Provider {
+  const { provider } = choice;
+  const model = expandModel(config, choice.model);
   if (provider === "codex") return codexProvider(model ?? "gpt-5.5", sessionId, config.get("HARNESS_EFFORT"));
   if (provider !== "bedrock" && provider !== "anthropic") {
     throw new Error(`Unknown provider "${provider}". Use codex, bedrock or anthropic.`);
   }
-  const name = model ?? config.get("ANTHROPIC_MODEL") ?? config.model ?? "sonnet";
+  const name = expandModel(config, model ?? config.get("ANTHROPIC_MODEL") ?? config.model ?? "sonnet");
   return claudeProvider(provider, resolveClaudeModel(name, provider, config), config);
 }
 

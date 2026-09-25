@@ -2,6 +2,7 @@
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { runAcp } from "./acp.ts";
+import { addModelExports } from "./envrc.ts";
 import { setupAoe } from "./aoe.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
@@ -111,6 +112,12 @@ if (args[0] === "aoe") {
     console.error(red((err as Error).message));
     process.exit(1);
   }
+}
+// `foxy-harness envrc [name...]` adds empty HARNESS_MODEL_<NAME> exports to ~/.envrc for direnv.
+if (args[0] === "envrc") {
+  const names = args.slice(1);
+  console.log(await addModelExports(names.length ? names : undefined));
+  process.exit(0);
 }
 if (args[0] === "models") {
   const { models } = (await listModels()) as { models: { slug: string; description?: string; visibility?: string }[] };
@@ -458,6 +465,10 @@ async function turn(prompt: string) {
           `⏺ ${name ? "Switched to" : "Using"} ${shortModel(agent.provider.model)} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`,
         ),
       );
+      const aliases = Object.entries(config.aliases);
+      if (!name && aliases.length) {
+        console.log(dim(aliases.map(([alias, model]) => `  ${alias}  ${shortModel(model)}`).join("\n")));
+      }
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
     } else if (prompt.startsWith("!")) {

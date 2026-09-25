@@ -30,6 +30,17 @@ Session managers like Agent of Empires, Orca and Paseo drive Claude Code and Cod
 
 `/model <name>` switches models mid-session within the same provider (`/model gpt-5.4`, `/model opus`). `/model` alone shows the current one. `foxy-harness models` lists what your ChatGPT plan can use.
 
+Name your own models with `HARNESS_MODEL_<NAME>` env vars, in your shell or a settings.json `env` block. It's handy for Bedrock ARNs.
+
+```bash
+export HARNESS_MODEL_OPUS5="arn:aws:bedrock:<region>:<account>:application-inference-profile/<id>"
+export HARNESS_MODEL_OPUS46="arn:aws:bedrock:<region>:<account>:application-inference-profile/<id>"
+```
+
+Then `/model opus46` switches mid-session, and `--model opus5` or `HARNESS_MODEL=opus5` picks one at start. Names are case-insensitive, and dashes or dots match underscores, so `sonnet-4.6` finds `HARNESS_MODEL_SONNET_4_6`. `/model` alone lists them.
+
+`foxy-harness envrc` adds those two exports with empty values to `~/.envrc` for [direnv](https://direnv.net). `foxy-harness envrc opus5 sonnet-4.6` picks the names. Names already there are skipped. Fill in the values and run `direnv allow ~`.
+
 `bun link` once puts a `foxy-harness` command on your PATH, so you can run it from any repo.
 
 The agent narrates in short lines. A dim `✻` heading for each reasoning step, one line before each batch of tool calls, and a final answer of about five lines. Bash calls show a plain-language description the model writes (`⏺ Check the current git branch`), not the command. The command and its output only show when it fails or asks permission. Other tool output is trimmed to a glimpse (the model still gets all of it).
@@ -97,6 +108,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `HARNESS_PROVIDER`                                   | `codex`, `bedrock` or `anthropic`. Same as `--provider`.                                                                                                           |
 | `HARNESS_MODEL`                                      | Same as `--model`.                                                                                                                                                 |
+| `HARNESS_MODEL_<NAME>`                               | A model name of your own. `HARNESS_MODEL_OPUS46=arn:...` makes `--model opus46` and `/model opus46` use that ARN.                                                  |
 | `HARNESS_YOLO=1`                                     | Skip permission prompts. Same as `--yolo`.                                                                                                                         |
 | `HARNESS_FULLSCREEN=0`                               | Plain line prompt instead of the full-screen view.                                                                                                                 |
 | `HARNESS_EFFORT`                                     | Reasoning effort. Claude takes `low`, `medium`, `high`, `xhigh`, `max` (unset is the API default, high). Codex takes `minimal` through `xhigh` (default `medium`). |
@@ -164,6 +176,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
 - `src/bootstrap.ts` sets up a session (provider, tools, instructions, skills, command hooks, the agent) for any frontend. `src/cli.ts` is the terminal frontend and `src/acp.ts` the ACP one. It supplies the rendering callbacks and the permission prompt.
+- `src/envrc.ts` is `foxy-harness envrc`, which adds empty model exports to `~/.envrc`.
 - `src/aoe.ts` is `foxy-harness aoe`, which sets up Agent of Empires' config and tmux.conf for the harness and checks the result with aoe.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
 - `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
