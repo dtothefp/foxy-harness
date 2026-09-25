@@ -4,10 +4,14 @@ import type { CompletionRequest, Message, Provider } from "./providers/types.ts"
 // Context management, two stages, checked before each model call:
 //   1. Past CLEAR_AT of the window, old tool results are swapped for a stub. Cheap, no model call.
 //      Tool output is most of what grows a coding session, and the model can rerun a tool.
+//      Editing an old message breaks the prompt cache from that message on, so the rest of the history
+//      is sent at full price once. Clearing only runs when it frees at least CLEAR_MIN of the window, in one
+//      batch, so that happens every few dozen turns rather than every turn.
 //   2. Past COMPACT_AT, the history is replaced by a summary. The provider's server-side compaction
 //      when it has one (Codex, Claude API), else a summary we ask the model for (Bedrock).
 
 export const CLEAR_AT = 0.6;
+export const CLEAR_MIN = 0.2;
 export const COMPACT_AT = 0.85;
 const KEEP_RECENT = 3; // tool results left untouched
 const MIN_CHARS = 500; // not worth clearing below this
@@ -17,21 +21,24 @@ export const CLEARED = "[Output cleared to save context. Run the tool again if y
 // Rough token count for text we haven't sent yet. Real usage replaces it after the next call.
 export const estimateTokens = (chars: number) => Math.ceil(chars / 4);
 
+type ToolMessage = Extract<Message, { role: "tool" }>;
+
+const stub = (m: ToolMessage) => (m.context ? `${CLEARED}\n\n${m.context}` : CLEARED);
+const clearable = (m: ToolMessage) => m.output.length >= MIN_CHARS && !m.output.startsWith(CLEARED);
+const freeable = (m: ToolMessage) =>
+  (m.attachments?.reduce((n, a) => n + attachmentChars(a), 0) ?? 0) + (clearable(m) ? m.output.length - stub(m).length : 0);
+
+// Clears every old tool result if together that frees at least minChars, else leaves them all.
 // Returns the number of characters removed.
-export function clearToolResults(messages: Message[]): number {
-  const tools = messages.filter((m) => m.role === "tool");
-  let freed = 0;
-  for (const m of tools.slice(0, -KEEP_RECENT)) {
-    if (m.attachments) {
-      freed += m.attachments.reduce((n, a) => n + attachmentChars(a), 0);
-      delete m.attachments;
-    }
-    if (m.output.length < MIN_CHARS || m.output.startsWith(CLEARED)) continue;
-    const next = m.context ? `${CLEARED}\n\n${m.context}` : CLEARED;
-    freed += m.output.length - next.length;
-    m.output = next;
+export function clearToolResults(messages: Message[], minChars = 0): number {
+  const old = messages.filter((m): m is ToolMessage => m.role === "tool").slice(0, -KEEP_RECENT);
+  const total = old.reduce((n, m) => n + freeable(m), 0);
+  if (!total || total < minChars) return 0;
+  for (const m of old) {
+    if (clearable(m)) m.output = stub(m);
+    delete m.attachments;
   }
-  return freed;
+  return total;
 }
 
 const SUMMARY_PROMPT = `Your context window is filling up, so this conversation is about to be replaced by a summary you write now. Don't call any tools. Reply with the summary only.

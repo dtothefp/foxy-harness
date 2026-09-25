@@ -138,7 +138,7 @@ Events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification
 
 Each step's footer shows how full the context window is. Two stages keep a long session under the limit.
 
-- **Past 60%, old tool results are cleared.** All but the three newest get swapped for a stub telling the model to rerun the tool. No model call. Package instructions that rode in on a tool result are kept.
+- **Past 60%, old tool results are cleared in one batch.** All but the three newest get swapped for a stub telling the model to rerun the tool. No model call. Package instructions that rode in on a tool result are kept. Editing an old message breaks the prompt cache from there on, so it only clears when that frees at least 20% of the window. That makes it a cache break every few dozen turns instead of every turn once a session is past 60%.
 - **Past 85%, the conversation is compacted.** The whole history is replaced by a summary. Codex uses the backend's own compaction (an encrypted item the model was trained on, same as Codex CLI). Claude on the API uses Anthropic's server-side compaction beta. Bedrock doesn't have it, so the model writes the summary itself. If compaction happens mid-task, the agent carries on from the summary.
 
 A spinner with elapsed time shows while a summary is written (about 10 to 20 seconds). Type `/compact` in the REPL to compact now. A `PreCompact` hook can return `{ block }` to skip it.
