@@ -7,9 +7,17 @@ import { HARNESS_HOME } from "./auth/codex-oauth.ts";
 //   2. ~/.foxy-harness/settings.json "env" block, for harness-only overrides
 //   3. real environment variables
 // Names match Claude Code's (ANTHROPIC_*, CLAUDE_CODE_USE_BEDROCK, AWS_*), plus HARNESS_PROVIDER and HARNESS_MODEL.
+// HARNESS_MODEL_<NAME> defines a model name of your own, so HARNESS_MODEL_OPUS46=arn:... makes `/model opus46` work.
 // Values are read through get() only, never copied into process.env, so bash commands don't inherit them.
 
-export type Config = { get(name: string): string | undefined; model?: string };
+export type Config = {
+  get(name: string): string | undefined;
+  model?: string;
+  // Model names defined with HARNESS_MODEL_<NAME>, lowercased, to what each one stands for.
+  aliases: Record<string, string>;
+};
+
+const ALIAS = /^HARNESS_MODEL_(.+)$/;
 
 export async function loadConfig(): Promise<Config> {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
@@ -27,5 +35,12 @@ export async function loadConfig(): Promise<Config> {
       console.error(`foxy-harness: skipping ${path} (${err})`);
     }
   }
-  return { get: (name) => process.env[name] || env[name] || undefined, model };
+  const get = (name: string) => process.env[name] || env[name] || undefined;
+  const aliases: Record<string, string> = {};
+  for (const key of new Set([...Object.keys(env), ...Object.keys(process.env)])) {
+    const name = ALIAS.exec(key)?.[1];
+    const value = get(key);
+    if (name && value) aliases[name.toLowerCase()] = value;
+  }
+  return { get, model, aliases };
 }

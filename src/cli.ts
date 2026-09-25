@@ -458,6 +458,10 @@ async function turn(prompt: string) {
           `⏺ ${name ? "Switched to" : "Using"} ${shortModel(agent.provider.model)} (${agent.provider.name})${name ? "" : ". /model <name> switches."}`,
         ),
       );
+      const aliases = Object.entries(config.aliases);
+      if (!name && aliases.length) {
+        console.log(dim(aliases.map(([alias, model]) => `  ${alias}  ${shortModel(model)}`).join("\n")));
+      }
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
     } else if (prompt.startsWith("!")) {
