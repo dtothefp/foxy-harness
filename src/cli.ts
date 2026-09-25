@@ -31,7 +31,16 @@ const describe = (input: unknown) => {
   return description?.trim() || `$ ${command?.split("\n")[0]}`;
 };
 
+// web_search shows its query, or the page when Codex's search opens one. web_fetch shows its URL.
+const webLabel = (name: string, input: unknown) => {
+  const { query, url } = (input ?? {}) as { query?: string; url?: string };
+  return name === "web_fetch" ? `Fetch(${url})` : query != null ? `Search(${JSON.stringify(query)})` : `Open(${url})`;
+};
+const isWeb = (name: string) => name === "web_search" || name === "web_fetch";
+
 const spinner = createSpinner();
+// Piped output only. Whether the model's text stopped partway through a line.
+let midLine = false;
 
 const args = process.argv.slice(2);
 const flag = (...names: string[]) => {
@@ -151,6 +160,7 @@ function showToolEnd(output: string, ok: boolean, changes: FileChange[] | undefi
   if (ok && (changes || name === "bash")) return;
   const lines = output.trimEnd().split("\n");
   if (ok && name === "read_file") return console.log(dim(`  ⎿ ${output.startsWith("Attached ") ? "attached" : `${lines.length} lines`}`));
+  if (ok && name === "web_fetch") return console.log(dim(`  ⎿ ${output.includes("Attached ") ? "attached" : `${lines.length} lines`}`));
   if (name === "bash" && yolo) console.log(dim(`  $ ${bashInput(input).command}`));
   const max = ok ? 4 : 12;
   const shown = lines.slice(0, max).map((l) => `  ${l}`).join("\n");
@@ -165,19 +175,30 @@ const frontend: Frontend = {
     : async (e) => {
         spinner.waiting();
         if (e.changes) console.log(renderChanges(e.changes));
+        else if (e.tool === "web_fetch") console.log(`${cyan("⏺")} ${webLabel(e.tool, e.input)}`);
         else console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
-        return ask(e.changes ? "apply?" : "run?");
+        return ask(e.changes ? "apply?" : e.tool === "web_fetch" ? "fetch?" : "run?");
       },
   notice: (line) => console.log(dim(`⏺ ${line}`)),
-  onText: (d) => (md ? md.push(d) : process.stdout.write(d)),
+  onText: (d) => {
+    if (md) return md.push(d);
+    process.stdout.write(d);
+    midLine = !d.endsWith("\n");
+  },
   onReasoning: (s) => console.log(dim(`\x1b[3m✻ ${s}\x1b[23m`)),
   onToolStart: (name, input, changes) => {
+    // Hosted searches are reported mid-reply, so end the line the model was writing.
+    md?.end();
+    if (midLine) process.stdout.write("\n");
+    midLine = false;
     spinner.busy("Running", 5000);
     const args = input as { path?: string };
     // Without --yolo the permission prompt already printed the diff or command.
     if (changes) yolo && console.log(renderChanges(changes));
     else if (name === "bash") yolo && console.log(`${cyan("⏺")} ${describe(input)}`);
     else if (name === "read_file") console.log(`${cyan("⏺")} Read(${args.path})`);
+    else if (name === "web_fetch") yolo && console.log(`${cyan("⏺")} ${webLabel(name, input)}`);
+    else if (isWeb(name)) console.log(`${cyan("⏺")} ${webLabel(name, input)}`);
     else console.log(`${cyan("⏺")} ${name}(${JSON.stringify(input).slice(0, 120)})`);
   },
   onToolEnd: (output, ok, changes, name, input) => {
@@ -216,12 +237,12 @@ try {
     fakeTools: demoUnknownTool
       ? [
           {
-            name: "web_search",
-            description: "Search the web and return the top results.",
+            name: "get_weather",
+            description: "Get the current weather for a city.",
             parameters: {
               type: "object",
-              properties: { query: { type: "string" } },
-              required: ["query"],
+              properties: { city: { type: "string" } },
+              required: ["city"],
               additionalProperties: false,
             },
           },

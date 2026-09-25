@@ -305,7 +305,7 @@ async function toPrompt(blocks: any[], cwd: string): Promise<{ text: string; att
 
 // How the client shows a call: a title, a kind for the icon, the files it touches, and a diff for edits.
 function toolCall(name: string, input: unknown, changes: FileChange[] | undefined, callId: string, cwd: string): Update {
-  const args = (input ?? {}) as { command?: string; description?: string; path?: string; offset?: number };
+  const args = (input ?? {}) as { command?: string; description?: string; path?: string; offset?: number; query?: string; url?: string };
   const base = { sessionUpdate: "tool_call", toolCallId: callId, name, status: "pending", rawInput: input };
   if (changes) {
     return {
@@ -323,6 +323,8 @@ function toolCall(name: string, input: unknown, changes: FileChange[] | undefine
   if (name === "read_file" && args.path) {
     return { ...base, title: `Read ${args.path}`, kind: "read", locations: [{ path: resolve(cwd, args.path), line: args.offset ?? null }] };
   }
+  if (name === "web_fetch") return { ...base, title: `Fetch ${args.url ?? ""}`.trim(), kind: "fetch" };
+  if (name === "web_search") return { ...base, title: args.query != null ? `Search "${args.query}"` : `Open ${args.url ?? "page"}`, kind: args.query != null ? "search" : "fetch" };
   if (EDIT_TOOLS.has(name)) return { ...base, title: args.path ? `Edit ${args.path}` : "Edit files", kind: "edit" };
   return { ...base, title: name, kind: "other" };
 }

@@ -1,6 +1,6 @@
 # foxy-harness
 
-A small coding agent for the terminal. TypeScript on Bun. One loop, three tools (`read_file`, an edit tool, `bash`). Runs on ChatGPT (Codex) or Claude.
+A small coding agent for the terminal. TypeScript on Bun. One loop, a handful of tools (`read_file`, an edit tool, `bash`, `web_fetch`, `web_search`). Runs on ChatGPT (Codex) or Claude.
 
 ## Setup
 
@@ -43,6 +43,8 @@ Claude requests ask for adaptive thinking with summaries (`display: "summarized"
 Drag an image or PDF into the prompt (or type its path) and it's attached, so the model sees it. `read_file` opens them too, so the model can look at a screenshot path on its own. Images are PNG, JPEG, GIF, WebP and HEIC. On macOS, images over 1568px or 3.5 MB and HEIC photos are converted with `sips` first. PDFs go up to 20 MB and 100 pages, and Claude reads both the text and the page images. macOS screenshot names have a special space before AM/PM, and paths typed with a plain space still match.
 
 `read_file` turns office documents into text. Word, RTF, ODT and web archives go through `textutil` (macOS only). Excel sheets come back as tab-separated rows and PowerPoint as text per slide. Other binary files are refused instead of read as garbage.
+
+Web search runs where the backend can do it. Codex and the Claude API search on their side (the Responses API's `web_search` and Claude's `web_search_20250305` server tool), and the harness shows each search as it happens. Bedrock has no server-side search, so there the harness searches DuckDuckGo itself. `web_fetch` always runs locally. It turns HTML into text with links kept, fetches GitHub file pages raw, and attaches images and PDFs. It asks before each URL (a fetch can carry data out), `web_search` doesn't.
 
 Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. Shift+Enter, or a `\` at the end of a line, types a newline. Shift+Enter needs a terminal that reports modified keys (xterm's modifyOtherKeys, which Ghostty, kitty and WezTerm support). Inside tmux, turn on extended keys.
 
@@ -93,6 +95,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 | `HARNESS_MODEL` | Same as `--model`. |
 | `HARNESS_YOLO=1` | Skip permission prompts. Same as `--yolo`. |
 | `HARNESS_EFFORT` | Reasoning effort. Claude takes `low`, `medium`, `high`, `xhigh`, `max` (unset is the API default, high). Codex takes `minimal` through `xhigh` (default `medium`). |
+| `HARNESS_WEB_SEARCH` | `local` runs web search in the harness instead of on the Claude API, for orgs that turned the server tool off. |
 | `HARNESS_MAX_STEPS` | Model calls per turn before it stops. Unset is unlimited. A turn that hits it says so, and `continue` picks it back up. |
 | `HARNESS_CONTEXT_WINDOW` | Context window in tokens. Default 272000 (Codex), 200000 (Claude). Compaction thresholds scale with it. |
 | `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
@@ -109,7 +112,7 @@ Without `--provider`, the harness picks Bedrock if `CLAUDE_CODE_USE_BEDROCK=1`, 
 
 Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gateways are.
 
-Every edit shows a red/green diff and asks before writing. Every bash command asks too. `--yolo` (or `HARNESS_YOLO=1`) skips both (diffs still print). `read_file` never asks. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn. At the prompt it clears what's typed, and on an empty prompt it exits.
+Every edit shows a red/green diff and asks before writing. Every bash command and `web_fetch` URL asks too. `--yolo` (or `HARNESS_YOLO=1`) skips all of them (diffs still print). `read_file` and `web_search` never ask. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn. At the prompt it clears what's typed, and on an empty prompt it exits.
 
 Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step, along with the directory it ran in. The banner shows the id.
 
@@ -125,7 +128,7 @@ Shell command hooks use Claude Code's format, in a `hooks` block in `~/.foxy-har
 }
 ```
 
-Events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, PreCompact, Stop and SessionEnd. Each command gets JSON on stdin with Claude Code's field names (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `prompt` and so on). Tool names are foxy-harness's own (`bash`, `read_file`, `apply_patch`, `edit_file`), and matchers are regexes, case-insensitive. Exit 2 blocks the prompt, tool call or compaction with stderr as the reason. Exit 0 can print JSON with `decision: "block"`, a PreToolUse `permissionDecision: "deny"`, or `hookSpecificOutput.additionalContext`. Plain stdout from UserPromptSubmit is added to the prompt. Hooks for one event run in parallel with a 60 second default timeout (`timeout` in seconds). `FOXY_PROJECT_DIR` and `CLAUDE_PROJECT_DIR` are set to the launch directory. Notification fires with `notification_type: "permission_prompt"` when a permission question waits on you.
+Events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, PreCompact, Stop and SessionEnd. Each command gets JSON on stdin with Claude Code's field names (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, `prompt` and so on). Tool names are foxy-harness's own (`bash`, `read_file`, `apply_patch`, `edit_file`, `web_fetch`, `web_search`), and matchers are regexes, case-insensitive. Exit 2 blocks the prompt, tool call or compaction with stderr as the reason. Exit 0 can print JSON with `decision: "block"`, a PreToolUse `permissionDecision: "deny"`, or `hookSpecificOutput.additionalContext`. Plain stdout from UserPromptSubmit is added to the prompt. Hooks for one event run in parallel with a 60 second default timeout (`timeout` in seconds). `FOXY_PROJECT_DIR` and `CLAUDE_PROJECT_DIR` are set to the launch directory. Notification fires with `notification_type: "permission_prompt"` when a permission question waits on you.
 
 ## Context and compaction
 
@@ -159,6 +162,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - `src/tools/edit-file.ts` is exact string replace for Claude (same shape as Claude Code's Edit).
 - `src/diff.ts` + `src/render.ts` draw the GitHub-style diff. `src/markdown.ts` styles streamed replies. `src/command-hooks.ts` runs shell hooks from settings.json. `src/sessions.ts` finds and loads saved sessions for `--continue` and `--resume`. `src/spinner.ts` draws the status line for quiet stretches. `src/keys.ts` decodes modified keys like Shift+Enter before readline sees them.
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Images and PDFs come back as attachments, office documents as text (`src/attachments.ts`).
+- `src/tools/web.ts` has `web_fetch` and the local `web_search`. A provider lists its server-side tools in `hostedTools`, the registry drops the local version of those, and the provider reports each server call through `onServerTool` so the frontends show it like any other tool.
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
 - `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
 - `docs/codex-backend.md` has the OAuth and wire-format details.

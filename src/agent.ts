@@ -85,7 +85,16 @@ export class Agent {
           this.push({ role: "user", text: "Continue the task from the summary." }, 40);
         }
         const started = performance.now();
-        const res = await provider.complete({ ...this.request(signal), onText: this.opts.onText, onReasoning: this.opts.onReasoning });
+        const res = await provider.complete({
+          ...this.request(signal),
+          onText: this.opts.onText,
+          onReasoning: this.opts.onReasoning,
+          // Already done by the time it's reported, so no hooks or permission, just the frontends.
+          onServerTool: (c) => {
+            this.opts.onToolStart?.(c.name, c.input, undefined, c.id);
+            this.opts.onToolEnd?.(c.output, c.ok, undefined, c.name, c.input, c.id);
+          },
+        });
         this.opts.onStep?.({ ms: performance.now() - started, firstTokenMs: res.firstTokenMs, usage: res.usage });
         this.messages.push({ role: "assistant", text: res.text, toolCalls: res.toolCalls, raw: res.raw, usage: res.usage });
         if (res.usage.inputTokens != null) this.contextTokens = res.usage.inputTokens + (res.usage.outputTokens ?? 0);
@@ -227,13 +236,15 @@ export class Agent {
   }
 }
 
-export function buildSystemPrompt(cwd: string, tools: Tool[], instructions?: Instructions, skills: Skill[] = []): string {
+// `hosted` are tools the backend runs (web search), listed alongside the harness's own.
+export function buildSystemPrompt(cwd: string, tools: Tool[], instructions?: Instructions, skills: Skill[] = [], hosted: { name: string; hint: string }[] = []): string {
+  const listed = [...tools.map((t) => ({ name: t.spec.name, hint: t.hint })), ...hosted];
   let prompt = `You are foxy-harness, a coding agent running in the user's terminal.
 Working directory: ${cwd}
 Platform: ${process.platform}
 
 Tools:
-${tools.map((t) => `- ${t.spec.name}: ${t.hint}`).join("\n")}
+${listed.map((t) => `- ${t.name}: ${t.hint}`).join("\n")}
 
 Guidelines:
 - Explore before editing. Prefer rg and fd if installed.

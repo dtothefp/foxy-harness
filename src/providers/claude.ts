@@ -1,4 +1,5 @@
 import type { Config } from "../config.ts";
+import { webSearchTool } from "../tools/web.ts";
 import { eventStreamEvents } from "./eventstream.ts";
 import { sseEvents } from "./sse.ts";
 import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX } from "./types.ts";
@@ -19,6 +20,11 @@ const COMPACT_BETA = "compact-2026-09-04";
 // Adaptive thinking with summaries on. Newer models think by default but hide it ("omitted"), so nothing
 // shows while they think. Models before 4.6 reject adaptive, and the request is retried without it.
 const THINKING = { type: "adaptive", display: "summarized" };
+// Server-side web search, on the Claude API only (Bedrock doesn't have it, so it gets the local tool).
+// The basic version, since later ones need code execution and a model that supports it.
+const WEB_SEARCH = { type: "web_search_20250305", name: "web_search" };
+// A long search turn can come back paused. Each continuation resends the partial reply.
+const MAX_CONTINUATIONS = 5;
 
 // Fallback ids for the direct API. Bedrock needs ANTHROPIC_DEFAULT_<ALIAS>_MODEL, since ids and ARNs are per account.
 const ALIASES: Record<string, string> = {
@@ -46,6 +52,8 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
   const effort = config.get("HARNESS_EFFORT");
   const settings = { effort: effort ?? "default (high)", thinking: "adaptive, summarized" };
   let thinking = true;
+  // HARNESS_WEB_SEARCH=local uses the harness's own search, for orgs that turned the server tool off.
+  const hostedSearch = transport === "anthropic" && config.get("HARNESS_WEB_SEARCH") !== "local";
 
   async function send(req: CompletionRequest, extra: Record<string, unknown> = {}): Promise<Completion> {
     // Every request that carries a compaction block needs the beta header, not just the one that made it.
@@ -54,7 +62,7 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
     for (let attempt = 0; ; attempt++) {
       const body = JSON.stringify({
         ...endpoint.body,
-        ...requestBody(req),
+        ...requestBody(req, hostedSearch),
         ...(thinking ? { thinking: THINKING } : {}),
         ...(effort ? { output_config: { effort } } : {}),
         ...extra,
@@ -63,7 +71,7 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
       if (res.ok) {
         // Bedrock streams AWS event frames. The direct API and some gateways stream SSE.
         const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
-        return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req.onText, req.onReasoning);
+        return readStream(binary ? eventStreamEvents(res) : sseEvents(res), req);
       }
       const text = await res.text();
       if (thinking && res.status === 400 && /thinking|adaptive|display/i.test(text)) {
@@ -86,7 +94,18 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
     model,
     contextWindow: CONTEXT_WINDOW,
     settings,
-    complete: (req) => send(req),
+    hostedTools: hostedSearch ? [{ name: "web_search", hint: webSearchTool.hint }] : [],
+    // pause_turn means the server stopped a long search turn early. Sending the partial reply back resumes it,
+    // and the continuation's blocks belong to the same assistant message.
+    async complete(req) {
+      let res = await send(req);
+      for (let i = 0; res.stopReason === "pause_turn" && i < MAX_CONTINUATIONS; i++) {
+        const partial: Message = { role: "assistant", text: res.text, toolCalls: [], raw: res.raw };
+        const next = await send({ ...req, messages: [...req.messages, partial] });
+        res = { ...next, text: res.text + next.text, toolCalls: [...res.toolCalls, ...next.toolCalls], raw: [...res.raw, ...next.raw], firstTokenMs: res.firstTokenMs };
+      }
+      return res;
+    },
     // The response is a single signed compaction block, which goes first in messages from then on.
     compact:
       transport === "anthropic"
@@ -166,12 +185,12 @@ function customHeaders(config: Config): Record<string, string> {
   return out;
 }
 
-function requestBody(req: CompletionRequest) {
+function requestBody(req: CompletionRequest, hostedSearch: boolean) {
   return {
     max_tokens: MAX_TOKENS,
     // Cache breakpoint on the system prompt. Tools render before it, so both stay cached all session.
     system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
-    tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
+    tools: [...req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })), ...(hostedSearch ? [WEB_SEARCH] : [])],
     messages: toMessages(req.messages),
   };
 }
@@ -218,16 +237,14 @@ function toMessages(messages: Message[]) {
   flush();
 
   // A second, moving breakpoint on the newest block, so each step reuses the cached conversation.
+  // Thinking blocks can't carry one, which only matters when a paused turn ends on one.
   const last = out.at(-1);
-  if (last) last.content[last.content.length - 1] = { ...last.content.at(-1), cache_control: { type: "ephemeral" } };
+  const block = last?.content.at(-1);
+  if (last && block && !/thinking/.test(block.type)) last.content[last.content.length - 1] = { ...block, cache_control: { type: "ephemeral" } };
   return out;
 }
 
-async function readStream(
-  events: AsyncIterable<any>,
-  onText?: (d: string) => void,
-  onReasoning?: (s: string) => void,
-): Promise<Completion> {
+async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onServerTool }: CompletionRequest): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
   const blocks: Block[] = [];
@@ -265,9 +282,12 @@ async function readStream(
       }
       case "content_block_stop": {
         const b = blocks[ev.index]!;
-        if (b.type === "tool_use") {
-          b.input = parseJson(json[ev.index] ?? "");
-          out.toolCalls.push({ id: b.id, name: b.name, input: b.input });
+        if (b.type === "tool_use" || b.type === "server_tool_use") b.input = parseJson(json[ev.index] ?? "");
+        if (b.type === "tool_use") out.toolCalls.push({ id: b.id, name: b.name, input: b.input });
+        // The search ran between the two blocks. Its results arrive whole in content_block_start.
+        if (b.type === "web_search_tool_result") {
+          const use = blocks.find((u) => u?.type === "server_tool_use" && u.id === b.tool_use_id);
+          onServerTool?.({ id: b.tool_use_id, name: use?.name ?? "web_search", input: use?.input ?? {}, ...searchOutput(b.content) });
         }
         // Summarized thinking arrives whole before the block stops. Hidden ("omitted") thinking is empty.
         if (b.type === "thinking") {
@@ -277,6 +297,7 @@ async function readStream(
         break;
       }
       case "message_delta":
+        if (ev.delta?.stop_reason) out.stopReason = ev.delta.stop_reason;
         if (ev.usage?.output_tokens != null) out.usage.outputTokens = ev.usage.output_tokens;
         if (ev.usage?.output_tokens_details?.thinking_tokens != null) out.usage.thinkingTokens = ev.usage.output_tokens_details.thinking_tokens;
         break;
@@ -287,6 +308,13 @@ async function readStream(
   // Replayed verbatim next turn (thinking blocks need their signatures). Empty text blocks are rejected.
   out.raw = blocks.filter((b) => b && !(b.type === "text" && !b.text));
   return out;
+}
+
+// content is a list of results, or one error object.
+function searchOutput(content: any): { output: string; ok: boolean } {
+  if (!Array.isArray(content)) return { output: `Search failed: ${content?.error_code ?? "unknown error"}`, ok: false };
+  if (!content.length) return { output: "No results.", ok: true };
+  return { output: content.map((r: Block) => `${r.title}\n  ${r.url}`).join("\n"), ok: true };
 }
 
 function parseJson(s: string): unknown {

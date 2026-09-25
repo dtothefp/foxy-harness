@@ -1,6 +1,7 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
+import { webSearchTool } from "../tools/web.ts";
 import { sseEvents } from "./sse.ts";
-import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
+import { type Completion, type CompletionRequest, type Attachment, type Message, type Provider, reasoningHeading, type ServerToolCall, SUMMARY_PREFIX, type ToolCall } from "./types.ts";
 
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
 const BASE = "https://chatgpt.com/backend-api/codex";
@@ -12,13 +13,15 @@ export function codexProvider(model: string, sessionId: string, effort = "medium
     let res = await send(req, model, sessionId, effort, false, extra);
     if (res.status === 401) res = await send(req, model, sessionId, effort, true, extra);
     if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
-    return readStream(res, req.onText, req.onReasoning);
+    return readStream(res, req);
   }
   return {
     name: "codex",
     model,
     contextWindow: CONTEXT_WINDOW,
     settings: { effort, reasoning: "summary auto" },
+    // The Responses API's hosted search. It can also open pages and search within them.
+    hostedTools: [{ name: "web_search", hint: webSearchTool.hint }],
     complete: (req) => request(req),
     // Remote compaction, what Codex CLI does. A compaction_trigger item at the end of the input makes the
     // server answer with one encrypted "compaction" item, which stands in for the history from then on.
@@ -49,12 +52,12 @@ async function send(req: CompletionRequest, model: string, sessionId: string, ef
       model,
       instructions: req.system,
       input: [...toInput(req.messages), ...extra],
-      tools: req.tools.map((t) => ({ type: "function", ...t })),
+      tools: [...req.tools.map((t) => ({ type: "function", ...t })), { type: "web_search" }],
       tool_choice: "auto",
       parallel_tool_calls: true,
       reasoning: { effort, summary: "auto" },
       text: { verbosity: "low" },
-      include: ["reasoning.encrypted_content"],
+      include: ["reasoning.encrypted_content", "web_search_call.action.sources"],
       store: false,
       stream: true,
       prompt_cache_key: sessionId,
@@ -102,11 +105,7 @@ function stripId(item: unknown) {
   return rest;
 }
 
-async function readStream(
-  res: Response,
-  onText?: (d: string) => void,
-  onReasoning?: (s: string) => void,
-): Promise<Completion> {
+async function readStream(res: Response, { onText, onReasoning, onServerTool }: CompletionRequest): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
 
@@ -126,6 +125,7 @@ async function readStream(
         out.firstTokenMs ??= performance.now() - started;
         out.raw.push(ev.item);
         if (ev.item.type === "function_call") out.toolCalls.push(parseCall(ev.item));
+        if (ev.item.type === "web_search_call") onServerTool?.(searchCall(ev.item));
         break;
       }
       case "response.completed":
@@ -148,6 +148,15 @@ async function readStream(
     }
   }
   return out;
+}
+
+// action is { type: "search", query, sources } or { type: "open_page" | "find_in_page", url, pattern }.
+function searchCall(item: { id: string; status?: string; action?: Record<string, any> }): ServerToolCall {
+  const { type, query, url, pattern, sources } = item.action ?? {};
+  const input = type === "search" ? { query } : { url, ...(pattern ? { pattern } : {}) };
+  const urls = ((sources ?? []) as { url?: string }[]).flatMap((s) => (s.url ? [s.url] : []));
+  const output = urls.length ? urls.join("\n") : type === "search" ? "No sources listed." : `Opened ${url ?? "page"}`;
+  return { id: item.id, name: "web_search", input, output, ok: item.status !== "failed" };
 }
 
 function parseCall(item: { call_id: string; name: string; arguments: string }): ToolCall {
