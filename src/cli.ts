@@ -84,10 +84,15 @@ if (args[0] === "login") {
   await login();
   process.exit(0);
 }
-// `foxy-harness aoe` registers the harness with Agent of Empires.
+// `foxy-harness aoe [live|tmux] [--check]` sets up Agent of Empires and tmux for the harness.
 if (args[0] === "aoe") {
+  const mode = args[1] === "tmux" ? "tmux" : "live";
+  if (args[1] && !["live", "tmux", "--check"].includes(args[1])) {
+    console.error(red(`Unknown aoe mode "${args[1]}". Use live or tmux.`));
+    process.exit(1);
+  }
   try {
-    console.log(await setupAoe());
+    console.log(await setupAoe({ mode, check: args.includes("--check") }));
     process.exit(0);
   } catch (err) {
     console.error(red((err as Error).message));

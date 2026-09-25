@@ -255,6 +255,7 @@ Guidelines:
 - Explore before editing. Prefer rg and fd if installed.
 - Read a file before editing it. Make small targeted edits, never rewrite a whole file to change a few lines.
 - Run the project's tests or typecheck after changes when they exist.
+- To set up or repair Agent of Empires (aoe) and tmux for foxy-harness, run \`foxy-harness aoe live\` (open sessions inside aoe) or \`foxy-harness aoe tmux\` (attach to tmux). \`foxy-harness aoe --check\` only reports.
 - To read an earlier foxy-harness session (to pick up its work), run \`foxy-harness transcript --list\`, then \`foxy-harness transcript <id>\`.
 
 Communication:
