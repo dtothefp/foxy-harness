@@ -129,15 +129,17 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     await live.hooks.emit({ type: "SessionEnd", sessionId: id });
   }
 
-  // Reports the call, then asks the client. A cancelled turn answers for the client.
+  // Reports the call, then asks the client. The request repeats the call's title, kind and diff, since some
+  // clients (aoe) show the request as its own card. A cancelled turn answers for the client.
   async function askPermission(live: Live, e: PreToolUse): Promise<HookResult> {
-    update(live, toolCall(e.tool, e.input, e.changes, e.callId, live.cwd));
+    const { sessionUpdate: _, ...call } = toolCall(e.tool, e.input, e.changes, e.callId, live.cwd);
+    update(live, { sessionUpdate: "tool_call", ...call });
     live.announced.add(e.callId);
     const kind = e.changes ? "edit" : e.tool;
     if (live.allowed.has(kind)) return;
     const signal = live.current?.signal;
     const cancelled = new Promise<undefined>((done) => signal?.addEventListener("abort", () => done(undefined), { once: true }));
-    const reply = await Promise.race([request("session/request_permission", { sessionId: live.id, toolCall: { toolCallId: e.callId }, options: PERMISSION_OPTIONS }), cancelled]);
+    const reply = await Promise.race([request("session/request_permission", { sessionId: live.id, toolCall: call, options: PERMISSION_OPTIONS }), cancelled]);
     const outcome = reply?.result?.outcome as { outcome: string; optionId?: string } | undefined;
     if (outcome?.outcome === "selected" && outcome.optionId?.startsWith("allow")) {
       if (outcome.optionId === "allow_always") live.allowed.add(kind);

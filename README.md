@@ -67,6 +67,16 @@ Zed, in `settings.json`.
 { "agent_servers": { "foxy-harness": { "type": "custom", "command": "foxy-harness", "args": ["--acp"] } } }
 ```
 
+Agent of Empires, in `~/.agent-of-empires/config.toml`. The first entry is the terminal view, `agent_acp_cmd` the structured view.
+
+```toml
+[session.custom_agents]
+foxy-harness = "foxy-harness"
+
+[session.agent_acp_cmd]
+foxy-harness = "foxy-harness --acp"
+```
+
 ## Configuration
 
 Nothing is hardcoded. Settings come from three places, later wins.
