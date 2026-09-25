@@ -141,7 +141,22 @@ if (args[0] === "transcript") {
 
 const cwd = process.cwd();
 const input = keyInput(process.stdin);
-const rl = createInterface({ input, output: process.stdout, terminal: process.stdin.isTTY });
+// Readline echoes what you type. During a turn that would land in the middle of the agent's output, so
+// its echo is muted and the spinner line shows the draft instead.
+const screen = {
+  muted: false,
+  write: (...a: Parameters<typeof process.stdout.write>) => screen.muted || process.stdout.write(...a),
+  get columns() {
+    return process.stdout.columns;
+  },
+  get rows() {
+    return process.stdout.rows;
+  },
+  on: (event: string, fn: () => void) => process.stdout.on(event, fn),
+  off: (event: string, fn: () => void) => process.stdout.off(event, fn),
+  removeListener: (event: string, fn: () => void) => process.stdout.removeListener(event, fn),
+};
+const rl = createInterface({ input, output: screen as unknown as NodeJS.WritableStream, terminal: process.stdin.isTTY });
 
 const resumed = await resumeTarget();
 const sessionId = resumed?.id ?? sessionIdArg ?? crypto.randomUUID();
@@ -191,9 +206,40 @@ async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Da
 let current: AbortController | undefined;
 
 async function ask(question: string) {
-  const answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
+  // A half-typed steer is set aside so it isn't taken as the answer, then put back.
+  const draft = takeLine();
+  unmute();
+  let answer: string;
+  try {
+    answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
+  } finally {
+    screen.muted = true;
+    rl.write(draft);
+    showDraft();
+  }
   if (answer === "" || /^y(es)?$/i.test(answer)) return;
   return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
+}
+
+// Empties readline's line and returns what was on it.
+function takeLine() {
+  const line = rl.line;
+  const muted = screen.muted;
+  screen.muted = true;
+  rl.write(null, { ctrl: true, name: "e" });
+  rl.write(null, { ctrl: true, name: "u" });
+  screen.muted = muted;
+  return line;
+}
+
+function unmute() {
+  // Readline redraws from where it last drew, which it tracked while muted. Start fresh from this line.
+  (rl as unknown as { prevRows: number }).prevRows = 0;
+  screen.muted = false;
+}
+
+function showDraft() {
+  spinner.draft(current && screen.muted ? rl.line : "");
 }
 
 // The model reads the full tool result. The user sees a glimpse on success (nothing for bash) and more on
@@ -266,6 +312,7 @@ const frontend: Frontend = {
       ),
     );
   },
+  onSteer: (text) => console.log(`${cyan("›")} ${text.split("\n")[0]}${text.includes("\n") ? dim(" …") : ""}`),
   onCompact: (info) => {
     const k = (n: number) => `${Math.round(n / 1000)}k`;
     if (info.kind === "clear") return console.log(dim(`⏺ Cleared old tool results (~${k(info.freedTokens)} tokens)`));
@@ -331,8 +378,31 @@ if (process.stdin.isTTY) {
   input.on("keypress", (_s, key?: { name?: string }) => {
     if (key?.name === "paste-start") pasting = true;
     if (key?.name === "paste-end") pasting = false;
+    // Esc stops a turn, like ctrl+c.
+    if (key?.name === "escape" && current && screen.muted && !pasting) current.abort();
+    showDraft();
   });
 }
+
+// Enter during a turn steers it. The message joins the same run at the next step, after the tool calls
+// in flight finish, rather than starting a second agent or waiting for the turn to end.
+const steerLines: string[] = [];
+rl.on("line", (line) => {
+  if (!current) return;
+  if (pasting) return void steerLines.push(line);
+  if (line.endsWith("\\")) return void steerLines.push(line.slice(0, -1));
+  steerLines.push(line);
+  const text = steerLines.splice(0).join("\n").trim();
+  showDraft();
+  if (!text) return;
+  if (text.startsWith("/")) {
+    rl.write(text.replace(/\n/g, " "));
+    showDraft();
+    return console.log(dim("⏺ Commands wait for the turn to finish. esc stops it."));
+  }
+  console.log(dim("⏺ Queued, it goes in after the current step"));
+  void attachmentsInPrompt(text, cwd).then(({ attachments }) => agent.steer(text, attachments.length ? attachments : undefined));
+});
 
 function readPrompt(): Promise<string> {
   return new Promise((resolve) => {
@@ -352,13 +422,16 @@ function readPrompt(): Promise<string> {
     spinner.idle();
     process.stdout.write("\n");
     rl.setPrompt(`${cyan("›")} `);
-    rl.prompt();
+    unmute();
+    // Keeps anything typed during the turn, with the cursor at its end.
+    rl.prompt(true);
   });
 }
 
 async function turn(prompt: string) {
   const controller = new AbortController();
   current = controller;
+  if (process.stdin.isTTY) screen.muted = true;
   try {
     if (prompt === "/model" || prompt.startsWith("/model ")) {
       const name = prompt.slice("/model".length).trim();
@@ -387,6 +460,21 @@ async function turn(prompt: string) {
     spinner.idle();
     md?.end();
     current = undefined;
+    // Steers the run never got to (it was stopped) go back into the prompt to send or edit.
+    const left = agent
+      .takeQueued()
+      .map((q) => q.text)
+      .join(" ");
+    const queued = [left, steerLines.splice(0).join(" ")].filter(Boolean).join(" ");
+    if (queued) {
+      rl.write(
+        [queued, takeLine()]
+          .filter(Boolean)
+          .join(" ")
+          .replace(/\s*\n\s*/g, " "),
+      );
+      console.log(dim("⏺ Put what you'd queued back in the prompt"));
+    }
   }
 }
 
@@ -415,7 +503,7 @@ if (oneShot) {
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
   console.log(
     dim(
-      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, ctrl+c interrupts a turn, ctrl+d exits`,
+      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
     ),
   );
   if (resumed) showRecap(resumed.session, resumed.mtime);

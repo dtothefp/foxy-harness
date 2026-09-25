@@ -118,6 +118,8 @@ Raw AWS access keys (SigV4 signing) aren't supported yet. Bearer tokens and gate
 
 Every edit shows a red/green diff and asks before writing. Every bash command and `web_fetch` URL asks too. `--yolo` (or `HARNESS_YOLO=1`) skips all of them (diffs still print). `read_file` and `web_search` never ask. Type `n` to decline or any text to decline with a reason the model sees. Ctrl+C interrupts a turn. At the prompt it clears what's typed, and on an empty prompt it exits.
 
+You can type while a turn runs. What you type shows on the status line, and Enter queues it. It joins the same run at the next step (after the tool calls in flight finish) as another user message, so the model sees it before deciding what to do next. It doesn't start a second agent or wait for the turn to end. Esc or Ctrl+C stops the turn, and anything still queued goes back into the prompt to edit or send. Slash commands wait for the turn to finish. Over ACP a `session/prompt` sent during a turn steers it the same way and resolves when the turn ends.
+
 Each session's messages save to `~/.foxy-harness/sessions/<id>.json` after every step, along with the directory it ran in. The banner shows the id.
 
 ## Hooks

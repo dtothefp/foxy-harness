@@ -8,6 +8,9 @@ import { format } from "node:util";
 // It also sets the terminal title the way Claude Code does, which is how session managers (Orca, tmux
 // pane titles in Agent of Empires) tell whether an agent is busy. A braille spinner frame while working,
 // ✋ while a permission question waits, ✳ when idle at the prompt.
+//
+// Text typed mid-turn (a steer being drafted) shows at the end of the line, since readline's own echo
+// is muted while the agent is printing.
 
 const QUIET_MS = 5000;
 const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -22,6 +25,7 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
   let shown = false;
   let atLineStart = true;
   let frame = 0;
+  let draft = "";
   const now = () => performance.now();
   const elapsed = () => Math.round((now() - started) / 1000);
   const title = (glyph: string) => out.isTTY && write(`\x1b]0;${glyph} foxy-harness\x07`);
@@ -33,9 +37,15 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
 
   function tick() {
     // Only on an empty line, so it never lands in the middle of a line or a question waiting for input.
-    if (!label || !atLineStart || now() - quietSince < threshold) return;
+    if (!label || !atLineStart || (!draft && now() - quietSince < threshold)) return;
     shown = true;
-    write(`\r\x1b[2K\x1b[36m${FRAMES[frame++ % FRAMES.length]}\x1b[0m \x1b[2m${label}… ${elapsed()}s\x1b[0m`);
+    const status = `${label}… ${elapsed()}s`;
+    // Keep the draft on one line, showing its end since that's where the cursor is.
+    const room = (out.columns || 80) - status.length - 5;
+    const typed = draft.length > room ? `…${draft.slice(-(room - 1))}` : draft;
+    write(
+      `\r\x1b[2K\x1b[36m${FRAMES[frame++ % FRAMES.length]}\x1b[0m \x1b[2m${status}\x1b[0m${draft && room > 1 ? `  \x1b[36m›\x1b[0m ${typed}` : ""}`,
+    );
   }
 
   if (out.isTTY) {
@@ -76,9 +86,17 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
     idle() {
       const secs = elapsed();
       label = undefined;
+      draft = "";
       clear();
       title("✳");
       return secs;
+    },
+    // What's typed so far mid-turn. Shown right away, not after the quiet stretch.
+    draft(text: string) {
+      if (text === draft) return;
+      draft = text;
+      if (!text) clear();
+      tick();
     },
     // Waiting on the user mid-turn, like a permission question.
     waiting() {

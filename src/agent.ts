@@ -32,6 +32,8 @@ export type AgentOptions = {
   onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string, input: unknown, callId: string) => void;
   onStep?: (info: { ms: number; firstTokenMs?: number; usage: object }) => void;
   onCompact?: (info: CompactInfo) => void;
+  // A message sent mid-run just went to the model.
+  onSteer?: (text: string) => void;
 };
 
 export type CompactInfo =
@@ -44,7 +46,22 @@ export class Agent {
   messages: Message[] = [];
   // Size of the next request: the last call's input + output, plus estimates for anything added since.
   contextTokens = 0;
+  // Messages sent while a run is going. They go to the model at the next step of that run.
+  private queued: { text: string; attachments?: Attachment[] }[] = [];
   constructor(private opts: AgentOptions) {}
+
+  // Adds a message to the running turn, the way typing mid-run works in Claude Code. It goes in after the
+  // current step's tool results, so the model sees it before deciding what to do next.
+  steer(text: string, attachments?: Attachment[]) {
+    this.queued.push({ text, attachments });
+  }
+
+  // Queued messages the model never saw (the run stopped first), so the frontend can hand them back.
+  takeQueued() {
+    const queued = this.queued;
+    this.queued = [];
+    return queued;
+  }
 
   get provider() {
     return this.opts.provider;
@@ -69,21 +86,20 @@ export class Agent {
 
   async run(prompt: string, signal?: AbortSignal, attachments?: Attachment[]): Promise<void> {
     const { hooks, provider } = this.opts;
-    const submitted = await hooks.emit({ type: "UserPromptSubmit", prompt });
-    if (submitted.block) throw new Error(`Prompt blocked: ${submitted.block}`);
-    const text = submitted.context ? `${prompt}\n\n${submitted.context}` : prompt;
+    const first = await this.userMessage(prompt, attachments);
 
     const maxSteps = this.opts.maxSteps ?? Infinity;
     try {
       // Before the prompt goes in, so a compaction here never swallows it.
       await this.manageContext(signal);
-      this.push(attachments?.length ? { role: "user", text, attachments } : { role: "user", text }, text.length + charsOf(attachments));
+      this.push(first, first.text.length + charsOf(attachments));
 
       for (let step = 0; step < maxSteps; step++) {
         // Mid-task compaction leaves only the summary. Tell the model to carry on from it.
         if (step > 0 && (await this.manageContext(signal))) {
           this.push({ role: "user", text: "Continue the task from the summary." }, 40);
         }
+        if (step > 0) await this.sendQueued();
         const started = performance.now();
         const res = await provider.complete({
           ...this.request(signal),
@@ -100,6 +116,8 @@ export class Agent {
         if (res.usage.inputTokens != null) this.contextTokens = res.usage.inputTokens + (res.usage.outputTokens ?? 0);
 
         if (res.toolCalls.length === 0) {
+          // A message sent after the model's last tool call keeps the run going instead of waiting for a new one.
+          if (this.queued.length) continue;
           await this.save();
           await hooks.emit({ type: "Stop", reason: "end_turn" });
           return;
@@ -170,6 +188,22 @@ export class Agent {
       tools: [...this.opts.tools.map((t) => t.spec), ...(this.opts.fakeTools ?? [])],
       signal,
     };
+  }
+
+  // The user message for a prompt, after UserPromptSubmit hooks had their say.
+  private async userMessage(prompt: string, attachments?: Attachment[]): Promise<Message & { role: "user" }> {
+    const submitted = await this.opts.hooks.emit({ type: "UserPromptSubmit", prompt });
+    if (submitted.block) throw new Error(`Prompt blocked: ${submitted.block}`);
+    const text = submitted.context ? `${prompt}\n\n${submitted.context}` : prompt;
+    return attachments?.length ? { role: "user", text, attachments } : { role: "user", text };
+  }
+
+  private async sendQueued() {
+    for (const { text, attachments } of this.takeQueued()) {
+      const message = await this.userMessage(text, attachments);
+      this.push(message, message.text.length + charsOf(attachments));
+      this.opts.onSteer?.(text);
+    }
   }
 
   private push(message: Message, chars: number) {
