@@ -19,6 +19,7 @@ export type AgentOptions = {
   sessionId: string;
   system: string;
   tools: Tool[];
+  // Model calls per turn before the turn stops. Unlimited by default, like Claude Code. Ctrl+C stops a turn.
   maxSteps?: number;
   // Tokens the model can take. Defaults to the provider's. Compaction thresholds are fractions of it.
   contextWindow?: number;
@@ -71,7 +72,7 @@ export class Agent {
     if (submitted.block) throw new Error(`Prompt blocked: ${submitted.block}`);
     const text = submitted.context ? `${prompt}\n\n${submitted.context}` : prompt;
 
-    const maxSteps = this.opts.maxSteps ?? 50;
+    const maxSteps = this.opts.maxSteps ?? Infinity;
     try {
       // Before the prompt goes in, so a compaction here never swallows it.
       await this.manageContext(signal);
