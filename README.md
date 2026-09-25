@@ -51,6 +51,22 @@ set -g extended-keys on
 set -as terminal-features ',xterm-ghostty:extkeys'
 ```
 
+## Agent Client Protocol
+
+`foxy-harness --acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) v1 on stdin and stdout, so editors and session managers that drive agents over ACP (Zed, Paseo) can run it. Sessions are the same files the terminal uses. One started in an editor resumes with `--resume <id>` and the other way round.
+
+- Supported methods are `session/new`, `session/load` (replays the history), `session/resume`, `session/list`, `session/prompt`, `session/cancel` and `session/close`.
+- Replies stream as message, thought and tool call updates. Edits carry diffs.
+- Permission questions go to the client as `session/request_permission` with allow, always allow and reject. `--yolo` skips them.
+- Tools run in the session's `cwd` on this machine. The client's fs and terminal methods aren't used.
+- MCP servers the client passes are ignored for now.
+
+Zed, in `settings.json`.
+
+```json
+{ "agent_servers": { "foxy-harness": { "type": "custom", "command": "foxy-harness", "args": ["--acp"] } } }
+```
+
 ## Configuration
 
 Nothing is hardcoded. Settings come from three places, later wins.
@@ -123,7 +139,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 ## How it works
 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
-- `src/bootstrap.ts` sets up a session (provider, tools, instructions, skills, command hooks, the agent) for any frontend. `src/cli.ts` is the terminal frontend. It supplies the rendering callbacks and the permission prompt.
+- `src/bootstrap.ts` sets up a session (provider, tools, instructions, skills, command hooks, the agent) for any frontend. `src/cli.ts` is the terminal frontend and `src/acp.ts` the ACP one. It supplies the rendering callbacks and the permission prompt.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
 - `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
 - `src/compact.ts` clears old tool results and holds the fallback summarizer. Providers with server-side compaction implement `compact()`, and the result is a `summary` message that replays in the provider's native form.
