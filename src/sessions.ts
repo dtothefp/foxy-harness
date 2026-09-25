@@ -22,7 +22,9 @@ export const sessionPath = (id: string) => join(SESSIONS, `${id}.json`);
 // Newest first. Ids starting with `prefix` only, when given.
 export async function sessionFiles(prefix = ""): Promise<SessionFile[]> {
   const names = (await readdir(SESSIONS).catch(() => [])).filter((n) => n.endsWith(".json") && n.startsWith(prefix));
-  const files = await Promise.all(names.map(async (n) => ({ id: n.slice(0, -5), path: join(SESSIONS, n), mtime: (await stat(join(SESSIONS, n))).mtime })));
+  const files = await Promise.all(
+    names.map(async (n) => ({ id: n.slice(0, -5), path: join(SESSIONS, n), mtime: (await stat(join(SESSIONS, n))).mtime })),
+  );
   return files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 }
 

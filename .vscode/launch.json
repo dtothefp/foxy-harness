@@ -49,7 +49,12 @@
       "type": "bun",
       "request": "launch",
       "program": "${workspaceFolder}/src/cli.ts",
-      "args": ["--yolo", "--model", "sonnet", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "args": [
+        "--yolo",
+        "--model",
+        "sonnet",
+        "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."
+      ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
     },
@@ -59,7 +64,12 @@
       "type": "bun",
       "request": "launch",
       "program": "${workspaceFolder}/src/cli.ts",
-      "args": ["--yolo", "--provider", "bedrock", "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."],
+      "args": [
+        "--yolo",
+        "--provider",
+        "bedrock",
+        "Add a one-line comment above the Hooks class in src/events.ts explaining what it is. Then stop."
+      ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
     },

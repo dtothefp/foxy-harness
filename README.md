@@ -89,24 +89,24 @@ Nothing is hardcoded. Settings come from three places, later wins.
 
 Values are read, never exported, so bash commands the agent runs don't see your tokens.
 
-| Variable | Meaning |
-|---|---|
-| `HARNESS_PROVIDER` | `codex`, `bedrock` or `anthropic`. Same as `--provider`. |
-| `HARNESS_MODEL` | Same as `--model`. |
-| `HARNESS_YOLO=1` | Skip permission prompts. Same as `--yolo`. |
-| `HARNESS_EFFORT` | Reasoning effort. Claude takes `low`, `medium`, `high`, `xhigh`, `max` (unset is the API default, high). Codex takes `minimal` through `xhigh` (default `medium`). |
-| `HARNESS_WEB_SEARCH` | `local` runs web search in the harness instead of on the Claude API, for orgs that turned the server tool off. |
-| `HARNESS_MAX_STEPS` | Model calls per turn before it stops. Unset is unlimited. A turn that hits it says so, and `continue` picks it back up. |
-| `HARNESS_CONTEXT_WINDOW` | Context window in tokens. Default 272000 (Codex), 200000 (Claude). Compaction thresholds scale with it. |
-| `CLAUDE_CODE_USE_BEDROCK=1` | Pick Bedrock when no provider is given. |
-| `ANTHROPIC_MODEL` | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`. |
-| `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | What each alias maps to. Required on Bedrock (model id or inference profile ARN). |
-| `ANTHROPIC_BEDROCK_BASE_URL` | Gateway in front of Bedrock. Default `https://bedrock-runtime.<region>.amazonaws.com`. |
-| `AWS_REGION` | Region. Taken from the ARN if unset. |
-| `AWS_BEARER_TOKEN_BEDROCK` or `ANTHROPIC_AUTH_TOKEN` | Sent as `Authorization: Bearer`. |
-| `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1` | Gateway handles AWS auth, send no AWS credentials. |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | Direct Anthropic API. |
-| `ANTHROPIC_CUSTOM_HEADERS` | Extra headers, one `Name: value` per line. |
+| Variable                                             | Meaning                                                                                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HARNESS_PROVIDER`                                   | `codex`, `bedrock` or `anthropic`. Same as `--provider`.                                                                                                           |
+| `HARNESS_MODEL`                                      | Same as `--model`.                                                                                                                                                 |
+| `HARNESS_YOLO=1`                                     | Skip permission prompts. Same as `--yolo`.                                                                                                                         |
+| `HARNESS_EFFORT`                                     | Reasoning effort. Claude takes `low`, `medium`, `high`, `xhigh`, `max` (unset is the API default, high). Codex takes `minimal` through `xhigh` (default `medium`). |
+| `HARNESS_WEB_SEARCH`                                 | `local` runs web search in the harness instead of on the Claude API, for orgs that turned the server tool off.                                                     |
+| `HARNESS_MAX_STEPS`                                  | Model calls per turn before it stops. Unset is unlimited. A turn that hits it says so, and `continue` picks it back up.                                            |
+| `HARNESS_CONTEXT_WINDOW`                             | Context window in tokens. Default 272000 (Codex), 200000 (Claude). Compaction thresholds scale with it.                                                            |
+| `CLAUDE_CODE_USE_BEDROCK=1`                          | Pick Bedrock when no provider is given.                                                                                                                            |
+| `ANTHROPIC_MODEL`                                    | Claude model or alias when `--model` isn't given. Falls back to the settings.json `model`, then `sonnet`.                                                          |
+| `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`        | What each alias maps to. Required on Bedrock (model id or inference profile ARN).                                                                                  |
+| `ANTHROPIC_BEDROCK_BASE_URL`                         | Gateway in front of Bedrock. Default `https://bedrock-runtime.<region>.amazonaws.com`.                                                                             |
+| `AWS_REGION`                                         | Region. Taken from the ARN if unset.                                                                                                                               |
+| `AWS_BEARER_TOKEN_BEDROCK` or `ANTHROPIC_AUTH_TOKEN` | Sent as `Authorization: Bearer`.                                                                                                                                   |
+| `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`                    | Gateway handles AWS auth, send no AWS credentials.                                                                                                                 |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`            | Direct Anthropic API.                                                                                                                                              |
+| `ANTHROPIC_CUSTOM_HEADERS`                           | Extra headers, one `Name: value` per line.                                                                                                                         |
 
 Without `--provider`, the harness picks Bedrock if `CLAUDE_CODE_USE_BEDROCK=1`, the Anthropic API if `--model` names a Claude model, else Codex.
 

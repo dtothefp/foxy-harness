@@ -31,7 +31,8 @@ export const webFetchTool: Tool = {
 
   async run(input, ctx) {
     const { url, max_chars = MAX_CHARS } = input as { url?: unknown; max_chars?: number };
-    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return { output: "Invalid arguments: `url` must be an http or https URL.", ok: false };
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url))
+      return { output: "Invalid arguments: `url` must be an http or https URL.", ok: false };
     const target = rawGitHub(url);
     const res = await get(target, ctx, { accept: "text/markdown, text/html;q=0.9, text/plain;q=0.9, */*;q=0.8" });
     const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
@@ -45,7 +46,8 @@ export const webFetchTool: Tool = {
       const attachment: Attachment = { name, mediaType: type, data: Buffer.from(body).toString("base64") };
       return { output: `Attached ${name} (${type}, ${body.byteLength} bytes)`, ok: true, attachments: [attachment] };
     }
-    if (type && !/^text\/|json|xml|javascript|yaml|toml|csv/.test(type)) return { output: `${head}\n\nUnsupported content type.`, ok: false };
+    if (type && !/^text\/|json|xml|javascript|yaml|toml|csv/.test(type))
+      return { output: `${head}\n\nUnsupported content type.`, ok: false };
     return { output: `${head}\n\n${truncate(toText(new TextDecoder().decode(body), type), max_chars)}`, ok: true };
   },
 };
@@ -66,12 +68,25 @@ export const webSearchTool: Tool = {
   async run(input, ctx) {
     const { query } = input as { query?: unknown };
     if (typeof query !== "string" || !query.trim()) return { output: "Invalid arguments: `query` must be a non-empty string.", ok: false };
-    const res = await get("https://html.duckduckgo.com/html/", ctx, { "content-type": "application/x-www-form-urlencoded" }, `q=${encodeURIComponent(query)}`);
+    const res = await get(
+      "https://html.duckduckgo.com/html/",
+      ctx,
+      { "content-type": "application/x-www-form-urlencoded" },
+      `q=${encodeURIComponent(query)}`,
+    );
     const html = await res.text();
     const results = parseDuckDuckGo(html);
-    if (results.length) return { output: results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`).join("\n"), ok: true };
+    if (results.length)
+      return {
+        output: results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`).join("\n"),
+        ok: true,
+      };
     // DuckDuckGo answers bots it doesn't like with a challenge page instead of results.
-    if (!res.ok || /anomaly|captcha|challenge/i.test(html)) return { output: `Search failed (DuckDuckGo ${res.status}, blocked or rate limited). Try again later or fetch a known URL.`, ok: false };
+    if (!res.ok || /anomaly|captcha|challenge/i.test(html))
+      return {
+        output: `Search failed (DuckDuckGo ${res.status}, blocked or rate limited). Try again later or fetch a known URL.`,
+        ok: false,
+      };
     return { output: "No results.", ok: true };
   },
 };
@@ -94,7 +109,9 @@ function rawGitHub(url: string): string {
 }
 
 function toText(body: string, type: string): string {
-  return type === "text/html" || type === "application/xhtml+xml" || (!type && /^\s*<(!doctype|html)/i.test(body)) ? htmlToText(body) : body;
+  return type === "text/html" || type === "application/xhtml+xml" || (!type && /^\s*<(!doctype|html)/i.test(body))
+    ? htmlToText(body)
+    : body;
 }
 
 // Good enough to read docs and articles. Drops scripts, styles and page chrome, keeps headings, lists and links.
@@ -124,7 +141,21 @@ function htmlToText(html: string): string {
   return title ? `# ${decodeEntities(title).trim()}\n\n${s}` : s;
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", mdash: "-", ndash: "-", hellip: "…", rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"' };
+const ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  mdash: "-",
+  ndash: "-",
+  hellip: "…",
+  rsquo: "'",
+  lsquo: "'",
+  rdquo: '"',
+  ldquo: '"',
+};
 
 function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
@@ -135,7 +166,10 @@ function decodeEntities(s: string): string {
 
 function parseDuckDuckGo(html: string): { title: string; url: string; snippet: string }[] {
   const out: { title: string; url: string; snippet: string }[] = [];
-  const strip = (s: string) => decodeEntities(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+  const strip = (s: string) =>
+    decodeEntities(s.replace(/<[^>]+>/g, ""))
+      .replace(/\s+/g, " ")
+      .trim();
   // Each result's title link, then its snippet link before the next title.
   const parts = html.split(/<a[^>]*class="result__a"/).slice(1);
   for (const part of parts) {

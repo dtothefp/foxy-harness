@@ -39,9 +39,17 @@ export async function loadCommandHooks(cwd: string): Promise<HookConfig> {
 export function registerCommandHooks(hooks: Hooks, config: HookConfig, sessionId: string, cwd: string) {
   for (const [event, matchers] of Object.entries(config) as [EventType, Matcher[]][]) {
     hooks.on(event, async (e: HarnessEvent) => {
-      const commands = matchers.filter((m) => matches(m.matcher, matchTarget(e))).flatMap((m) => m.hooks.filter((h) => h.type === "command"));
+      const commands = matchers
+        .filter((m) => matches(m.matcher, matchTarget(e)))
+        .flatMap((m) => m.hooks.filter((h) => h.type === "command"));
       if (!commands.length) return;
-      const payload = JSON.stringify({ session_id: sessionId, transcript_path: sessionPath(sessionId), cwd, hook_event_name: event, ...fields(e) });
+      const payload = JSON.stringify({
+        session_id: sessionId,
+        transcript_path: sessionPath(sessionId),
+        cwd,
+        hook_event_name: event,
+        ...fields(e),
+      });
       const results = await Promise.all(commands.map((h) => run(h, payload, cwd)));
       return combine(event, results);
     });

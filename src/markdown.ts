@@ -73,9 +73,11 @@ function block(raw: string): string {
   }
   if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(raw)) return `${DIM}${"─".repeat(Math.min(columns(), 60))}${RESET}`;
   if ((m = raw.match(/^\s*>\s?(.*)/))) return `${DIM}│${RESET} ${ITALIC}${wrap(inline(m[1]!), 2, `${DIM}│${RESET} ${ITALIC}`)}${RESET}`;
-  if ((m = raw.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)/))) return `${m[1]}${m[2] === " " ? "☐" : "☑"} ${wrap(inline(m[3]!), m[1]!.length + 2)}`;
+  if ((m = raw.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)/)))
+    return `${m[1]}${m[2] === " " ? "☐" : "☑"} ${wrap(inline(m[3]!), m[1]!.length + 2)}`;
   if ((m = raw.match(/^(\s*)[-*+]\s+(.*)/))) return `${m[1]}${DIM}•${RESET} ${wrap(inline(m[2]!), m[1]!.length + 2)}`;
-  if ((m = raw.match(/^(\s*)(\d+[.)])\s+(.*)/))) return `${m[1]}${DIM}${m[2]}${RESET} ${wrap(inline(m[3]!), m[1]!.length + m[2]!.length + 1)}`;
+  if ((m = raw.match(/^(\s*)(\d+[.)])\s+(.*)/)))
+    return `${m[1]}${DIM}${m[2]}${RESET} ${wrap(inline(m[3]!), m[1]!.length + m[2]!.length + 1)}`;
   const lead = raw.match(/^\s*/)![0].length;
   return " ".repeat(lead) + wrap(inline(raw.slice(lead)), lead);
 }

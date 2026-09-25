@@ -32,9 +32,15 @@ export async function loadAttachment(path: string): Promise<Attachment> {
 
 async function loadPdf(path: string): Promise<Attachment> {
   const bytes = Buffer.from(await Bun.file(path).arrayBuffer());
-  if (bytes.length > MAX_PDF_BYTES) throw new Error(`${basename(path)} is ${(bytes.length / 1e6).toFixed(1)} MB. PDFs over 20 MB can't be attached, read its text with pdftotext.`);
+  if (bytes.length > MAX_PDF_BYTES)
+    throw new Error(
+      `${basename(path)} is ${(bytes.length / 1e6).toFixed(1)} MB. PDFs over 20 MB can't be attached, read its text with pdftotext.`,
+    );
   const pages = pdfPages(path, bytes);
-  if (pages > MAX_PDF_PAGES) throw new Error(`${basename(path)} has ${pages} pages. PDFs over ${MAX_PDF_PAGES} pages can't be attached, read its text with pdftotext.`);
+  if (pages > MAX_PDF_PAGES)
+    throw new Error(
+      `${basename(path)} has ${pages} pages. PDFs over ${MAX_PDF_PAGES} pages can't be attached, read its text with pdftotext.`,
+    );
   return { name: basename(path), mediaType: "application/pdf", data: bytes.toString("base64"), pages: pages || undefined };
 }
 
@@ -92,7 +98,12 @@ function unzipList(path: string): string[] {
 }
 
 const xmlText = (s: string) =>
-  s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+  s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
 
 // Slides in order, the text runs of each paragraph on one line.
 function pptxText(path: string): string {
@@ -101,7 +112,9 @@ function pptxText(path: string): string {
     .sort((a, b) => Number(a.match(/\d+/)![0]) - Number(b.match(/\d+/)![0]));
   return slides
     .map((name, i) => {
-      const paras = unzip(path, name).split(/<\/a:p>/).map((p) => [...p.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => xmlText(m[1]!)).join(""));
+      const paras = unzip(path, name)
+        .split(/<\/a:p>/)
+        .map((p) => [...p.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => xmlText(m[1]!)).join(""));
       return `--- slide ${i + 1}\n${paras.filter((p) => p.trim()).join("\n")}`;
     })
     .join("\n\n");

@@ -217,7 +217,9 @@ export class Agent {
     const post = await this.opts.hooks.emit({ type: "PostToolUse", tool: name, input, output: r.output, ok: r.ok, changes });
     // Context is kept separately too, so clearing an old result doesn't drop package instructions.
     const attachments = r.attachments?.length ? r.attachments : undefined;
-    return post.context ? { output: `${r.output}\n\n${post.context}`, context: post.context, attachments } : { output: r.output, attachments };
+    return post.context
+      ? { output: `${r.output}\n\n${post.context}`, context: post.context, attachments }
+      : { output: r.output, attachments };
   }
 
   // What's saved to the session file, and what /session summarizes.
@@ -229,15 +231,18 @@ export class Agent {
   private async save() {
     const dir = join(HARNESS_HOME, "sessions");
     await mkdir(dir, { recursive: true });
-    await Bun.write(
-      join(dir, `${this.opts.sessionId}.json`),
-      JSON.stringify(this.snapshot(), null, 2),
-    );
+    await Bun.write(join(dir, `${this.opts.sessionId}.json`), JSON.stringify(this.snapshot(), null, 2));
   }
 }
 
 // `hosted` are tools the backend runs (web search), listed alongside the harness's own.
-export function buildSystemPrompt(cwd: string, tools: Tool[], instructions?: Instructions, skills: Skill[] = [], hosted: { name: string; hint: string }[] = []): string {
+export function buildSystemPrompt(
+  cwd: string,
+  tools: Tool[],
+  instructions?: Instructions,
+  skills: Skill[] = [],
+  hosted: { name: string; hint: string }[] = [],
+): string {
   const listed = [...tools.map((t) => ({ name: t.spec.name, hint: t.hint })), ...hosted];
   let prompt = `You are foxy-harness, a coding agent running in the user's terminal.
 Working directory: ${cwd}

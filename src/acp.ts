@@ -85,7 +85,12 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     const frontend: Frontend = {
       askPermission: flags.yolo ? undefined : (e) => askPermission(live, e),
       notice: (line) => console.error(`foxy-harness: ${line}`),
-      onText: (text) => update(live, { sessionUpdate: "agent_message_chunk", messageId: (live.messageId ??= crypto.randomUUID()), content: { type: "text", text } }),
+      onText: (text) =>
+        update(live, {
+          sessionUpdate: "agent_message_chunk",
+          messageId: (live.messageId ??= crypto.randomUUID()),
+          content: { type: "text", text },
+        }),
       onReasoning: (text) => update(live, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: `${text}\n` } }),
       onToolStart: (name, input, changes, callId) => {
         if (live.announced.has(callId)) update(live, { sessionUpdate: "tool_call_update", toolCallId: callId, status: "in_progress" });
@@ -94,17 +99,28 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
       },
       onToolEnd: (output, ok, changes, name, _input, callId) => {
         live.announced.delete(callId);
-        update(live, { sessionUpdate: "tool_call_update", toolCallId: callId, status: ok ? "completed" : "failed", content: toolOutput(output, ok, changes, name, cwd), rawOutput: { output } });
+        update(live, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: callId,
+          status: ok ? "completed" : "failed",
+          content: toolOutput(output, ok, changes, name, cwd),
+          rawOutput: { output },
+        });
       },
       onStep: ({ usage }) => {
         live.messageId = undefined;
         const u = usage as Usage;
-        if (u.inputTokens != null) update(live, { sessionUpdate: "usage_update", used: u.inputTokens + (u.outputTokens ?? 0), size: live.agent.contextWindow });
+        if (u.inputTokens != null)
+          update(live, { sessionUpdate: "usage_update", used: u.inputTokens + (u.outputTokens ?? 0), size: live.agent.contextWindow });
       },
       onCompact: (info) => {
         const k = (n: number) => `${Math.round(n / 1000)}k`;
         const text =
-          info.kind === "summary" ? `Compacted conversation (~${k(info.before)} → ~${k(info.after)} tokens)` : info.kind === "failed" ? `Compaction failed: ${info.error}` : undefined;
+          info.kind === "summary"
+            ? `Compacted conversation (~${k(info.before)} → ~${k(info.after)} tokens)`
+            : info.kind === "failed"
+              ? `Compaction failed: ${info.error}`
+              : undefined;
         if (text) update(live, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: `${text}\n` } });
       },
     };
@@ -139,7 +155,10 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     if (live.allowed.has(kind)) return;
     const signal = live.current?.signal;
     const cancelled = new Promise<undefined>((done) => signal?.addEventListener("abort", () => done(undefined), { once: true }));
-    const reply = await Promise.race([request("session/request_permission", { sessionId: live.id, toolCall: call, options: PERMISSION_OPTIONS }), cancelled]);
+    const reply = await Promise.race([
+      request("session/request_permission", { sessionId: live.id, toolCall: call, options: PERMISSION_OPTIONS }),
+      cancelled,
+    ]);
     const outcome = reply?.result?.outcome as { outcome: string; optionId?: string } | undefined;
     if (outcome?.outcome === "selected" && outcome.optionId?.startsWith("allow")) {
       if (outcome.optionId === "allow_always") live.allowed.add(kind);
@@ -156,10 +175,16 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     for (const m of messages) {
       const messageId = crypto.randomUUID();
       if (m.role === "user") update(live, { sessionUpdate: "user_message_chunk", messageId, content: { type: "text", text: m.text } });
-      if (m.role === "summary") update(live, { sessionUpdate: "agent_message_chunk", messageId, content: { type: "text", text: m.raw ? "_Earlier messages were compacted._" : m.text } });
+      if (m.role === "summary")
+        update(live, {
+          sessionUpdate: "agent_message_chunk",
+          messageId,
+          content: { type: "text", text: m.raw ? "_Earlier messages were compacted._" : m.text },
+        });
       if (m.role !== "assistant") continue;
       if (m.text) update(live, { sessionUpdate: "agent_message_chunk", messageId, content: { type: "text", text: m.text } });
-      for (const c of m.toolCalls) update(live, { ...toolCall(c.name, c.input, undefined, c.id, live.cwd), status: denied.has(c.id) ? "failed" : "completed" });
+      for (const c of m.toolCalls)
+        update(live, { ...toolCall(c.name, c.input, undefined, c.id, live.cwd), status: denied.has(c.id) ? "failed" : "completed" });
     }
   }
 
@@ -210,7 +235,12 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
       for (; i < files.length && out.length < PAGE; i++) {
         const s = await loadSession(files[i]!.path).catch(() => undefined);
         if (!s || (cwd && s.cwd !== cwd) || !s.messages.some((m) => m.role === "user")) continue;
-        out.push({ sessionId: files[i]!.id, cwd: s.cwd, title: sessionTitle(s).slice(0, 100) || null, updatedAt: files[i]!.mtime.toISOString() });
+        out.push({
+          sessionId: files[i]!.id,
+          cwd: s.cwd,
+          title: sessionTitle(s).slice(0, 100) || null,
+          updatedAt: files[i]!.mtime.toISOString(),
+        });
       }
       return { sessions: out, nextCursor: i < files.length ? String(i) : null };
     },
@@ -230,7 +260,11 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
         live.current = undefined;
         live.messageId = undefined;
       }
-      update(live, { sessionUpdate: "session_info_update", title: sessionTitle(live.agent.snapshot()).slice(0, 100), updatedAt: new Date().toISOString() });
+      update(live, {
+        sessionUpdate: "session_info_update",
+        title: sessionTitle(live.agent.snapshot()).slice(0, 100),
+        updatedAt: new Date().toISOString(),
+      });
       return { stopReason: controller.signal.aborted ? "cancelled" : live.stop === "max_steps" ? "max_turn_requests" : "end_turn" };
     },
     "session/cancel": async ({ sessionId }) => {
@@ -260,12 +294,15 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
     try {
       send({ id: msg.id, result: (await handler(msg.params ?? {})) ?? {} });
     } catch (err) {
-      const error = err instanceof RpcError ? { code: err.code, message: err.message } : { code: -32603, message: err instanceof Error ? err.message : String(err) };
+      const error =
+        err instanceof RpcError
+          ? { code: err.code, message: err.message }
+          : { code: -32603, message: err instanceof Error ? err.message : String(err) };
       send({ id: msg.id, error });
     }
   });
   await new Promise((done) => rl.on("close", done));
-  for (const id of [...sessions.keys()]) await close(id);
+  for (const id of sessions.keys()) await close(id);
   process.exit(0);
 }
 
@@ -292,7 +329,8 @@ async function toPrompt(blocks: any[], cwd: string): Promise<{ text: string; att
       const r = b.resource;
       const path = filePath(r.uri) ?? r.uri;
       if (typeof r.text === "string") context.push(`<file path="${path}">\n${r.text}\n</file>`);
-      else if (/^image\/|^application\/pdf$/.test(r.mimeType ?? "")) attachments.push({ name: basename(path), mediaType: r.mimeType, data: r.blob });
+      else if (/^image\/|^application\/pdf$/.test(r.mimeType ?? ""))
+        attachments.push({ name: basename(path), mediaType: r.mimeType, data: r.blob });
     }
   }
   return { text: [parts.join(""), ...context].join("\n\n").trim() || "(empty prompt)", attachments };
@@ -318,13 +356,23 @@ function toolCall(name: string, input: unknown, changes: FileChange[] | undefine
   }
   if (name === "bash") {
     const command = args.command ?? "";
-    return { ...base, title: args.description?.trim() || command.split("\n")[0] || "bash", kind: "execute", content: [text(`$ ${command}`)] };
+    return {
+      ...base,
+      title: args.description?.trim() || command.split("\n")[0] || "bash",
+      kind: "execute",
+      content: [text(`$ ${command}`)],
+    };
   }
   if (name === "read_file" && args.path) {
     return { ...base, title: `Read ${args.path}`, kind: "read", locations: [{ path: resolve(cwd, args.path), line: args.offset ?? null }] };
   }
   if (name === "web_fetch") return { ...base, title: `Fetch ${args.url ?? ""}`.trim(), kind: "fetch" };
-  if (name === "web_search") return { ...base, title: args.query != null ? `Search "${args.query}"` : `Open ${args.url ?? "page"}`, kind: args.query != null ? "search" : "fetch" };
+  if (name === "web_search")
+    return {
+      ...base,
+      title: args.query != null ? `Search "${args.query}"` : `Open ${args.url ?? "page"}`,
+      kind: args.query != null ? "search" : "fetch",
+    };
   if (EDIT_TOOLS.has(name)) return { ...base, title: args.path ? `Edit ${args.path}` : "Edit files", kind: "edit" };
   return { ...base, title: name, kind: "other" };
 }
