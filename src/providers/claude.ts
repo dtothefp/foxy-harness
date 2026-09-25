@@ -268,8 +268,11 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
   const blocks: Block[] = [];
   const json: string[] = [];
   let sawStart = false;
+  // Whatever arrived instead of Claude's events, for the error below.
+  const unknown: string[] = [];
 
   for await (const ev of events) {
+    if (!sawStart && ev?.type !== "message_start" && unknown.length < 3) unknown.push(JSON.stringify(ev).slice(0, 700));
     switch (ev.type) {
       case "message_start": {
         sawStart = true;
@@ -327,7 +330,10 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
     }
   }
   // A gateway or proxy that answers 200 without Claude's events would otherwise look like an empty reply.
-  if (!sawStart) throw new Error("claude stream ended before message_start. The endpoint answered but sent no reply.");
+  if (!sawStart)
+    throw new Error(
+      `claude stream ended before message_start. The endpoint answered but sent ${unknown.length ? `this instead: ${unknown.join("\n")}` : "nothing"}.`,
+    );
   // Replayed verbatim next turn (thinking blocks need their signatures). Empty text blocks are rejected.
   out.raw = blocks.filter((b) => b && !(b.type === "text" && !b.text));
   return out;

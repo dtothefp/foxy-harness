@@ -6,6 +6,9 @@
 export async function* eventStreamEvents(res: Response): AsyncGenerator<any> {
   let buf: Uint8Array = new Uint8Array(0);
   const text = new TextDecoder();
+  let events = 0;
+  // Frames that carried something other than a Claude event, kept for the error if no event ever arrives.
+  const other: string[] = [];
 
   for await (const chunk of res.body!) {
     const next = new Uint8Array(buf.length + chunk.length);
@@ -17,6 +20,9 @@ export async function* eventStreamEvents(res: Response): AsyncGenerator<any> {
       const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
       const total = view.getUint32(0);
       const headersLen = view.getUint32(4);
+      // A gateway can send a plain JSON or text error under this content type. Its first bytes read as a
+      // nonsense length, so stop decoding and show the body.
+      if (total < 16 || total > 64 * 1024 * 1024 || headersLen > total - 16) throw notAStream(buf);
       if (buf.length < total) break;
 
       const headers = parseHeaders(buf.subarray(12, 12 + headersLen));
@@ -27,9 +33,18 @@ export async function* eventStreamEvents(res: Response): AsyncGenerator<any> {
         throw new Error(`bedrock ${headers[":exception-type"] ?? headers[":error-code"] ?? "error"}: ${payload}`);
       }
       const { bytes } = JSON.parse(payload) as { bytes?: string };
-      if (bytes) yield JSON.parse(Buffer.from(bytes, "base64").toString("utf8"));
+      if (bytes) {
+        events++;
+        yield JSON.parse(Buffer.from(bytes, "base64").toString("utf8"));
+      } else other.push(`${headers[":event-type"] ?? "event"} ${payload}`);
     }
   }
+  if (buf.length) throw notAStream(buf);
+  if (!events && other.length) throw new Error(`bedrock sent no Claude events: ${other.join("\n").slice(0, 2000)}`);
+}
+
+function notAStream(buf: Uint8Array): Error {
+  return new Error(`not an event stream: ${new TextDecoder().decode(buf).trim().slice(0, 2000)}`);
 }
 
 // Header: [name len u8][name][type u8][value]. Only string values matter here; others are skipped.
