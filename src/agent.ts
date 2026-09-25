@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
 import { attachmentChars } from "./attachments.ts";
-import { CLEAR_AT, clearToolResults, COMPACT_AT, estimateTokens, summarize } from "./compact.ts";
+import { CLEAR_AT, CLEAR_MIN, clearToolResults, COMPACT_AT, estimateTokens, summarize } from "./compact.ts";
 import { formatSkills, type Instructions, type Skill } from "./context.ts";
 import type { Hooks } from "./events.ts";
 import type { CompletionRequest, Attachment, Message, Provider, ToolSpec } from "./providers/types.ts";
@@ -153,7 +153,8 @@ export class Agent {
   private async manageContext(signal?: AbortSignal): Promise<boolean> {
     const window = this.contextWindow;
     if (this.contextTokens > window * CLEAR_AT) {
-      const freed = estimateTokens(clearToolResults(this.messages));
+      // A small clear costs a cache break for little room, so it waits until there is a big batch to clear.
+      const freed = estimateTokens(clearToolResults(this.messages, window * CLEAR_MIN * 4));
       if (freed > 0) {
         this.contextTokens -= freed;
         this.opts.onCompact?.({ kind: "clear", freedTokens: freed });
