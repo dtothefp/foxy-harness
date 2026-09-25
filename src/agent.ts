@@ -99,7 +99,8 @@ export class Agent {
         if (step > 0 && (await this.manageContext(signal))) {
           this.push({ role: "user", text: "Continue the task from the summary." }, 40);
         }
-        if (step > 0) await this.sendQueued();
+        // A stopped run leaves queued messages for the frontend to hand back, rather than sending them.
+        if (step > 0 && !signal?.aborted) await this.sendQueued();
         const started = performance.now();
         const res = await provider.complete({
           ...this.request(signal),

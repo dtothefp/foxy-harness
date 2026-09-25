@@ -12,9 +12,9 @@ import { transcript } from "./transcript.ts";
 import { findSession, loadSession, type Session, sessionFiles, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
 import { listModels } from "./providers/codex.ts";
 import type { Usage } from "./providers/types.ts";
-import { keyInput } from "./keys.ts";
+import { keyInput, onMouse } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
-import { createSpinner } from "./spinner.ts";
+import { createTui } from "./tui.ts";
 import { renderChanges } from "./render.ts";
 import type { FileChange } from "./tools/types.ts";
 
@@ -40,7 +40,17 @@ const webLabel = (name: string, input: unknown) => {
 };
 const isWeb = (name: string) => name === "web_search" || name === "web_fetch";
 
-const spinner = createSpinner();
+// The pinned input at the bottom draws from readline's line plus earlier lines of a multi-line prompt.
+const tui = createTui(() => ({
+  lines: [...pendingLines, rl.line],
+  cursor: rl.cursor,
+  label: question,
+  hint: question
+    ? "enter answers · esc stops the turn"
+    : current
+      ? "enter steers the turn · esc interrupts"
+      : "enter sends · shift+enter for a newline · ctrl+d exits",
+}));
 // Piped output only. Whether the model's text stopped partway through a line.
 let midLine = false;
 
@@ -141,8 +151,8 @@ if (args[0] === "transcript") {
 
 const cwd = process.cwd();
 const input = keyInput(process.stdin);
-// Readline echoes what you type. During a turn that would land in the middle of the agent's output, so
-// its echo is muted and the spinner line shows the draft instead.
+// Readline does the line editing, but the input is drawn in the pinned panel, so its own echo is muted
+// once the panel is up.
 const screen = {
   muted: false,
   write: (...a: Parameters<typeof process.stdout.write>) => screen.muted || process.stdout.write(...a),
@@ -205,17 +215,24 @@ async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Da
 // The running turn. ctrl+c aborts it, which also cancels a permission question it's waiting on.
 let current: AbortController | undefined;
 
-async function ask(question: string) {
+// Lines of a multi-line prompt before the one being edited.
+const pendingLines: string[] = [];
+// A permission question being asked in the input.
+let question: string | undefined;
+
+async function ask(text: string) {
   // A half-typed steer is set aside so it isn't taken as the answer, then put back.
-  const draft = takeLine();
-  unmute();
+  const draft = [...pendingLines.splice(0), takeLine()];
+  question = `${text} [Y/n/reason] `;
+  tui.render();
   let answer: string;
   try {
-    answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
+    answer = (await rl.question(question, { signal: current?.signal })).trim();
   } finally {
-    screen.muted = true;
-    rl.write(draft);
-    showDraft();
+    question = undefined;
+    pendingLines.push(...draft.slice(0, -1));
+    rl.write(draft.at(-1)!);
+    tui.render();
   }
   if (answer === "" || /^y(es)?$/i.test(answer)) return;
   return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
@@ -224,22 +241,9 @@ async function ask(question: string) {
 // Empties readline's line and returns what was on it.
 function takeLine() {
   const line = rl.line;
-  const muted = screen.muted;
-  screen.muted = true;
   rl.write(null, { ctrl: true, name: "e" });
   rl.write(null, { ctrl: true, name: "u" });
-  screen.muted = muted;
   return line;
-}
-
-function unmute() {
-  // Readline redraws from where it last drew, which it tracked while muted. Start fresh from this line.
-  (rl as unknown as { prevRows: number }).prevRows = 0;
-  screen.muted = false;
-}
-
-function showDraft() {
-  spinner.draft(current && screen.muted ? rl.line : "");
 }
 
 // The model reads the full tool result. The user sees a glimpse on success (nothing for bash) and more on
@@ -264,7 +268,7 @@ const frontend: Frontend = {
   askPermission: yolo
     ? undefined
     : async (e) => {
-        spinner.waiting();
+        tui.waiting();
         if (e.changes) console.log(renderChanges(e.changes));
         else if (e.tool === "web_fetch") console.log(`${cyan("⏺")} ${webLabel(e.tool, e.input)}`);
         else console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
@@ -282,7 +286,7 @@ const frontend: Frontend = {
     md?.end();
     if (midLine) process.stdout.write("\n");
     midLine = false;
-    spinner.busy("Running", 5000);
+    tui.busy("Running");
     const args = input as { path?: string };
     // Without --yolo the permission prompt already printed the diff or command.
     if (changes) {
@@ -298,7 +302,7 @@ const frontend: Frontend = {
   onToolEnd: (output, ok, changes, name, input) => {
     showToolEnd(output, ok, changes, name, input);
     // The model is called next.
-    spinner.busy("Thinking");
+    tui.busy("Thinking");
   },
   onStep: ({ ms, firstTokenMs, usage }) => {
     md?.end();
@@ -316,8 +320,8 @@ const frontend: Frontend = {
   onCompact: (info) => {
     const k = (n: number) => `${Math.round(n / 1000)}k`;
     if (info.kind === "clear") return console.log(dim(`⏺ Cleared old tool results (~${k(info.freedTokens)} tokens)`));
-    if (info.kind === "start") return spinner.busy(info.trigger === "auto" ? "Context is filling up, compacting" : "Compacting");
-    const secs = spinner.idle();
+    if (info.kind === "start") return tui.busy(info.trigger === "auto" ? "Context is filling up, compacting" : "Compacting");
+    const secs = tui.idle();
     if (info.kind === "failed") console.log(red(`⏺ Compaction failed after ${secs}s: ${info.error}`));
     else
       console.log(
@@ -325,7 +329,7 @@ const frontend: Frontend = {
           `⏺ Compacted conversation, ${info.native ? "server-side" : "summary"}, ${secs}s (~${k(info.before)} → ~${k(info.after)} tokens)`,
         ),
       );
-    spinner.busy("Thinking");
+    tui.busy("Thinking");
   },
 };
 
@@ -363,7 +367,7 @@ const provider = agent.provider;
 // A turn cut off by HARNESS_MAX_STEPS would otherwise look finished.
 hooks.on("Stop", (e) => {
   if (e.reason !== "max_steps") return;
-  spinner.idle();
+  tui.idle();
   const n = Number(config.get("HARNESS_MAX_STEPS"));
   console.log(red(`⏺ Stopped after ${n} step${n === 1 ? "" : "s"} (HARNESS_MAX_STEPS). Say "continue" to keep going.`));
 });
@@ -379,25 +383,39 @@ if (process.stdin.isTTY) {
     if (key?.name === "paste-start") pasting = true;
     if (key?.name === "paste-end") pasting = false;
     // Esc stops a turn, like ctrl+c.
-    if (key?.name === "escape" && current && screen.muted && !pasting) current.abort();
-    showDraft();
+    if (key?.name === "escape" && current && !pasting) current.abort();
+    // PgUp/PgDn scroll back through the output. Typing anything else jumps back to the bottom.
+    if (key?.name === "pageup") return tui.scroll(tui.page());
+    if (key?.name === "pagedown") return tui.scroll(-tui.page());
+    tui.scroll(-Infinity);
   });
 }
 
-// Enter during a turn steers it. The message joins the same run at the next step, after the tool calls
-// in flight finish, rather than starting a second agent or waiting for the turn to end.
-const steerLines: string[] = [];
+// Waiting for the next prompt, when idle.
+let waiter: ((prompt: string) => void) | undefined;
+
+// Enter sends the prompt. During a turn it steers it instead. The message joins the same run at the next
+// step, after the tool calls in flight finish, rather than starting a second agent or waiting for the
+// turn to end.
 rl.on("line", (line) => {
-  if (!current) return;
-  if (pasting) return void steerLines.push(line);
-  if (line.endsWith("\\")) return void steerLines.push(line.slice(0, -1));
-  steerLines.push(line);
-  const text = steerLines.splice(0).join("\n").trim();
-  showDraft();
+  if (pasting) return void pendingLines.push(line);
+  if (line.endsWith("\\")) {
+    pendingLines.push(line.slice(0, -1));
+    return tui.render();
+  }
+  const text = [...pendingLines.splice(0), line].join("\n").trim();
+  tui.render();
+  if (!current) {
+    // Enter before the prompt is ready keeps the text in the input.
+    if (!waiter) return void rl.write(text.replace(/\n/g, " "));
+    waiter(text);
+    waiter = undefined;
+    return;
+  }
   if (!text) return;
   if (text.startsWith("/")) {
     rl.write(text.replace(/\n/g, " "));
-    showDraft();
+    tui.render();
     return console.log(dim("⏺ Commands wait for the turn to finish. esc stops it."));
   }
   console.log(dim("⏺ Queued, it goes in after the current step"));
@@ -406,32 +424,28 @@ rl.on("line", (line) => {
 
 function readPrompt(): Promise<string> {
   return new Promise((resolve) => {
-    const lines: string[] = [];
-    const onLine = (line: string) => {
-      if (pasting) return void lines.push(line);
-      if (line.endsWith("\\")) {
-        lines.push(line.slice(0, -1));
-        rl.setPrompt(dim("… "));
-        return rl.prompt();
-      }
-      lines.push(line);
-      rl.off("line", onLine);
-      resolve(lines.join("\n"));
-    };
-    rl.on("line", onLine);
-    spinner.idle();
+    waiter = resolve;
+    tui.idle();
+    if (screen.muted) return;
+    // Piped input, without the panel.
     process.stdout.write("\n");
     rl.setPrompt(`${cyan("›")} `);
-    unmute();
-    // Keeps anything typed during the turn, with the cursor at its end.
     rl.prompt(true);
   });
+}
+
+// The prompt as sent, at the top of the screen with its reply below.
+function showPrompt(prompt: string) {
+  if (!screen.muted) return;
+  tui.toTop();
+  const [first, ...rest] = prompt.split("\n");
+  console.log(`${cyan("›")} ${first}${rest.map((l) => `\n  ${l}`).join("")}\n`);
 }
 
 async function turn(prompt: string) {
   const controller = new AbortController();
   current = controller;
-  if (process.stdin.isTTY) screen.muted = true;
+  tui.render();
   try {
     if (prompt === "/model" || prompt.startsWith("/model ")) {
       const name = prompt.slice("/model".length).trim();
@@ -451,30 +465,25 @@ async function turn(prompt: string) {
       for (const a of attachments)
         console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}`));
       for (const e of errors) console.log(red(`⏺ ${e}`));
-      spinner.busy("Thinking");
+      tui.busy("Thinking");
       await agent.run(prompt, controller.signal, attachments);
     }
   } catch (err) {
     console.error(red(String(err)));
   } finally {
-    spinner.idle();
+    tui.idle();
     md?.end();
     current = undefined;
-    // Steers the run never got to (it was stopped) go back into the prompt to send or edit.
-    const left = agent
-      .takeQueued()
-      .map((q) => q.text)
-      .join(" ");
-    const queued = [left, steerLines.splice(0).join(" ")].filter(Boolean).join(" ");
-    if (queued) {
-      rl.write(
-        [queued, takeLine()]
-          .filter(Boolean)
-          .join(" ")
-          .replace(/\s*\n\s*/g, " "),
-      );
-      console.log(dim("⏺ Put what you'd queued back in the prompt"));
+    // Steers the run never got to (it was stopped) go back into the input, ahead of anything typed since,
+    // to send or edit.
+    const left = agent.takeQueued().flatMap((q) => q.text.split("\n"));
+    if (left.length) {
+      // With nothing typed since, the last line goes back on the line being edited.
+      if (!rl.line && !pendingLines.length) rl.write(left.pop()!);
+      pendingLines.unshift(...left);
+      console.log(dim("⏺ Put what you'd queued back in the input"));
     }
+    tui.render();
   }
 }
 
@@ -499,6 +508,14 @@ const oneShot = args.join(" ").trim();
 if (oneShot) {
   await turn(oneShot);
 } else {
+  // Full screen from here on, with the input pinned to the bottom. Readline's echo is replaced by the panel.
+  // HARNESS_FULLSCREEN=0 keeps the plain line prompt.
+  if (process.stdin.isTTY && process.stdout.isTTY && config.get("HARNESS_FULLSCREEN") !== "0") {
+    screen.muted = true;
+    tui.start();
+    // The wheel scrolls three rows at a time.
+    onMouse((e) => (e.button === 64 ? tui.scroll(3) : e.button === 65 ? tui.scroll(-3) : undefined));
+  }
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
   console.log(
@@ -511,18 +528,22 @@ if (oneShot) {
   // the turn. At the prompt it clears what's typed, and on an empty prompt it exits.
   rl.on("SIGINT", () => {
     if (current) return current.abort();
-    if (!rl.line) return rl.close();
-    rl.write(null, { ctrl: true, name: "e" });
-    rl.write(null, { ctrl: true, name: "u" });
+    if (!rl.line && !pendingLines.length) return rl.close();
+    pendingLines.length = 0;
+    takeLine();
+    tui.render();
   });
   process.on("SIGINT", () => current?.abort());
   rl.on("close", async () => {
+    tui.stop();
     await hooks.emit({ type: "SessionEnd", sessionId });
     process.exit(0);
   });
   while (true) {
     const prompt = (await readPrompt()).trim();
-    if (prompt) await turn(prompt);
+    if (!prompt) continue;
+    showPrompt(prompt);
+    await turn(prompt);
   }
 }
 

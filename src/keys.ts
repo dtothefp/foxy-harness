@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 // they're turned back into plain bytes before it sees them. Modified Enter becomes backslash + Enter,
 // the same continuation as typing a trailing \ yourself.
 
+const MOUSE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
 const MODIFIED = /\x1b\[(?:27;(\d+);(\d+)~|(\d+);(\d+)u)/g;
 
 export function decodeKeys(s: string): string {
@@ -31,8 +32,23 @@ export function keyInput(stdin: NodeJS.ReadStream): NodeJS.ReadableStream {
     isTTY: true,
     setRawMode: (mode: boolean) => (stdin.setRawMode(mode), input),
   });
-  stdin.on("data", (d) => input.write(decodeKeys(d.toString())));
+  stdin.on("data", (d) => {
+    // Mouse reports (SGR format) go to onMouse, not readline.
+    const s = d.toString().replace(MOUSE, (_, button, x, y, kind) => {
+      mouseHandler?.({ button: Number(button), x: Number(x), y: Number(y), release: kind === "m" });
+      return "";
+    });
+    if (s) input.write(decodeKeys(s));
+  });
   process.stdout.write("\x1b[>4;2m");
   process.on("exit", () => process.stdout.write("\x1b[>4;0m"));
   return input;
+}
+
+export type MouseEvent = { button: number; x: number; y: number; release: boolean };
+let mouseHandler: ((e: MouseEvent) => void) | undefined;
+
+// Receives mouse reports once a terminal has been asked for them (the full-screen view does, for the wheel).
+export function onMouse(handler: (e: MouseEvent) => void) {
+  mouseHandler = handler;
 }
