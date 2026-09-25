@@ -4,6 +4,10 @@ import { format } from "node:util";
 // erased the moment anything else prints, so it can stay armed for the whole turn. busy() shows it after
 // `after` ms (right away while waiting on the model). Once something has printed, it comes back only
 // after QUIET_MS with no output, like a long bash command or a pause mid-reply.
+//
+// It also sets the terminal title the way Claude Code does, which is how session managers (Orca, tmux
+// pane titles in Agent of Empires) tell whether an agent is busy. A braille spinner frame while working,
+// ✋ while a permission question waits, ✳ when idle at the prompt.
 
 const QUIET_MS = 5000;
 const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -20,6 +24,7 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
   let frame = 0;
   const now = () => performance.now();
   const elapsed = () => Math.round((now() - started) / 1000);
+  const title = (glyph: string) => out.isTTY && write(`\x1b]0;${glyph} foxy-harness\x07`);
 
   function clear() {
     if (shown) write("\r\x1b[2K");
@@ -53,7 +58,10 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
       error(...args);
     };
     setInterval(tick, 100).unref();
-    process.on("exit", clear);
+    process.on("exit", () => {
+      clear();
+      write("\x1b]0;\x07");
+    });
   }
 
   return {
@@ -61,6 +69,7 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
       label = text;
       started = quietSince = now();
       threshold = after;
+      title(FRAMES[0]!);
       tick();
     },
     // Returns the seconds since busy(), for messages like "compacted in 12s".
@@ -68,7 +77,14 @@ export function createSpinner(out: NodeJS.WriteStream = process.stdout) {
       const secs = elapsed();
       label = undefined;
       clear();
+      title("✳");
       return secs;
+    },
+    // Waiting on the user mid-turn, like a permission question.
+    waiting() {
+      label = undefined;
+      clear();
+      title("✋");
     },
   };
 }

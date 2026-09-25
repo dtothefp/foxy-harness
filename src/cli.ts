@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { Agent, buildSystemPrompt } from "./agent.ts";
 import { login } from "./auth/codex-oauth.ts";
+import { loadCommandHooks, registerCommandHooks } from "./command-hooks.ts";
 import { Hooks } from "./events.ts";
 import { loadConfig } from "./config.ts";
 import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
@@ -174,14 +175,17 @@ try {
   exit(err instanceof Error ? err.message : String(err));
 }
 const tools = toolsFor(provider.name);
+// Command hooks from settings.json run before the built-in permission prompt, so one can deny a call first.
+registerCommandHooks(hooks, await loadCommandHooks(cwd), sessionId, cwd);
 const [instructions, skills] = await Promise.all([loadInstructions(cwd), loadSkills(cwd)]);
 watchPackages(hooks, cwd, { instructions, skills }, (what) => console.log(dim(`⏺ Loaded ${what}`)));
 
 // The running turn. ctrl+c aborts it, which also cancels a permission question it's waiting on.
 let current: AbortController | undefined;
 
-async function ask(question: string) {
-  spinner.idle();
+async function ask(question: string, tool: string) {
+  spinner.waiting();
+  await hooks.emit({ type: "Notification", message: `foxy-harness needs your permission to use ${tool}`, notificationType: "permission_prompt" });
   const answer = (await rl.question(dim(`${question} [Y/n/reason] `), { signal: current?.signal })).trim();
   if (answer === "" || /^y(es)?$/i.test(answer)) return;
   return { block: /^n(o)?$/i.test(answer) ? "user declined" : answer };
@@ -193,11 +197,11 @@ if (!yolo) {
   hooks.on("PreToolUse", async (e) => {
     if (e.changes) {
       console.log(renderChanges(e.changes));
-      return ask("apply?");
+      return ask("apply?", e.tool);
     }
     if (e.tool !== "bash") return;
     console.log(`${cyan("⏺")} ${describe(e.input)}\n${dim(`  $ ${bashInput(e.input).command}`)}`);
-    return ask("run?");
+    return ask("run?", e.tool);
   });
 }
 
@@ -302,6 +306,7 @@ function readPrompt(): Promise<string> {
       resolve(lines.join("\n"));
     };
     rl.on("line", onLine);
+    spinner.idle();
     process.stdout.write("\n");
     rl.setPrompt(`${cyan("›")} `);
     rl.prompt();
