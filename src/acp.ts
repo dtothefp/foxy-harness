@@ -299,6 +299,16 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
         content: toolOutput(output, r.ok, undefined, "bash", live.cwd),
         rawOutput: { output },
       });
+      // Clients like aoe fold a successful call to one line, but the output is what you ran it for. A failed
+      // call already shows it.
+      if (r.ok && r.output) {
+        const fence = "`".repeat(Math.max(3, ...[...r.output.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+        update(live, {
+          sessionUpdate: "agent_message_chunk",
+          messageId: crypto.randomUUID(),
+          content: { type: "text", text: `${fence}\n${r.output}\n${fence}` },
+        });
+      }
     } finally {
       live.current = undefined;
     }
