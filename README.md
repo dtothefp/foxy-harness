@@ -63,11 +63,11 @@ Drag an image or PDF into the prompt (or type its path) and it's attached, so th
 
 Web search runs where the backend can do it. Codex and the Claude API search on their side (the Responses API's `web_search` and Claude's `web_search_20250305` server tool), and the harness shows each search as it happens. Bedrock has no server-side search, so there the harness searches DuckDuckGo itself. `web_fetch` always runs locally. It turns HTML into text with links kept, fetches GitHub file pages raw, and attaches images and PDFs. It asks before each URL (a fetch can carry data out), `web_search` doesn't.
 
-Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. Shift+Enter, or a `\` at the end of a line, types a newline. Shift+Enter needs a terminal that reports modified keys (xterm's modifyOtherKeys, which Ghostty, kitty and WezTerm support). Inside tmux, turn on extended keys.
+Pasting multi-line text keeps it as one prompt (bracketed paste). Enter sends it. Shift+Enter, or a `\` at the end of a line, types a newline. Shift+Enter needs a terminal that reports modified keys (xterm's modifyOtherKeys, which Ghostty, kitty and WezTerm support). Inside tmux, turn on extended keys. `foxy-harness aoe` adds this to tmux.conf and reloads tmux.
 
 ```
-set -g extended-keys on
-set -as terminal-features ',xterm-ghostty:extkeys'
+set -s extended-keys on
+set -as terminal-features ',xterm*:extkeys'
 ```
 
 ## Agent Client Protocol
@@ -86,7 +86,7 @@ Zed, in `settings.json`.
 { "agent_servers": { "foxy-harness": { "type": "custom", "command": "foxy-harness", "args": ["--acp"] } } }
 ```
 
-Agent of Empires. Run `foxy-harness aoe live` (or `foxy-harness aoe tmux`) and restart aoe. `live` opens sessions inside aoe's dashboard with your keys going to the agent (C-q back to the list, C-b b hides the sidebar). `tmux` attaches you to the agent's tmux session (C-b d back to aoe). Either way it edits aoe's `config.toml` in place (keeping a `.bak`), sets both views to the full path of `foxy-harness`, adds status rules so a waiting `apply?`, `run?` or `fetch?` shows as waiting, and makes new sessions open the same way as existing ones. It also adds a marked block to your tmux.conf (`window-size latest`, `aggressive-resize on`) so aoe's panes don't get a dotted border, and writes through a symlinked tmux.conf. Then aoe reads the config back. If aoe can't parse it, the old file goes back and you see why. Keys aoe doesn't recognize are listed. `foxy-harness aoe --check` does the checks without writing. Running it again changes nothing. By hand it's the entries below. The first is the terminal view, `agent_acp_cmd` the structured view.
+Agent of Empires. Run `foxy-harness aoe live` (or `foxy-harness aoe tmux`) and restart aoe. `live` opens sessions inside aoe's dashboard with your keys going to the agent (C-q back to the list, C-b b hides the sidebar). `tmux` attaches you to the agent's tmux session (C-b d back to aoe). Either way it edits aoe's `config.toml` in place (keeping a `.bak`), sets both views to the full path of `foxy-harness`, adds status rules so a waiting `apply?`, `run?` or `fetch?` shows as waiting, and makes new sessions open the same way as existing ones. It also adds a marked block to your tmux.conf (`window-size latest`, `aggressive-resize on`) so aoe's panes don't get a dotted border, plus extended keys so Shift+Enter adds a newline inside tmux, and writes through a symlinked tmux.conf. Then aoe reads the config back. If aoe can't parse it, the old file goes back and you see why. Keys aoe doesn't recognize are listed. `foxy-harness aoe --check` does the checks without writing. Running it again changes nothing. By hand it's the entries below. The first is the terminal view, `agent_acp_cmd` the structured view.
 
 ```toml
 [session.custom_agents]
