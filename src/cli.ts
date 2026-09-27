@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { runAcp } from "./acp.ts";
 import { addModelExports } from "./envrc.ts";
@@ -9,8 +12,22 @@ import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
 import { attachmentsInPrompt } from "./attachments.ts";
 import { ago, describeSession, shortModel } from "./inspect.ts";
+import { titleSession } from "./titles.ts";
 import { transcript } from "./transcript.ts";
-import { findSession, loadSession, type Session, sessionFiles, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
+import {
+  findSession,
+  loadSession,
+  markClosed,
+  markOpen,
+  providerFamily,
+  SESSIONS,
+  type Session,
+  sessionFiles,
+  sessionPath,
+  sessionState,
+  sessionsIn,
+  sessionTitle,
+} from "./sessions.ts";
 import { listModels } from "./providers/codex.ts";
 import type { Usage } from "./providers/types.ts";
 import { type Command, commands, expandSkill, matchCommands } from "./commands.ts";
@@ -54,8 +71,10 @@ const tui = createTui(() => ({
       ? "shell command · enter runs it, the model sees the output with your next prompt"
       : current
         ? "enter steers the turn · esc interrupts"
-        : "enter sends · shift+enter for a newline · / for commands · ctrl+d exits",
-  menu: menuView(),
+        : picker
+          ? "no sessions match"
+          : "enter sends · shift+enter for a newline · / for commands · ← sessions · ctrl+d exits",
+  menu: picker ? pickerView() : menuView(),
 }));
 
 // The slash command menu. It's open while the input is just a slash and a name, with no space yet.
@@ -78,6 +97,11 @@ function menuView() {
   return items.length ? { items, selected: Math.min(menuSelected, items.length - 1) } : undefined;
 }
 function menuKeys(keys: string): string {
+  if (picker) return pickerKeys(keys);
+  if ((keys === "\x1b[D" || keys === "\x1bOD") && waiter && !rl.line && !pendingLines.length) {
+    void openPicker();
+    return "";
+  }
   const items = menuItems();
   if (!items.length) return keys;
   const pick = items[Math.min(menuSelected, items.length - 1)]!;
@@ -91,6 +115,113 @@ function menuKeys(keys: string): string {
   } else return keys;
   tui.render();
   return "";
+}
+
+// When and where a session ran, for the session lists. "2 h ago · claude-monorepo (main) · 4 turns".
+function sessionPlace(s: Session, mtime: Date) {
+  const turns = s.messages.filter((m) => m.role === "user").length;
+  return `${ago(mtime)} · ${basename(s.cwd)}${s.branch ? ` (${s.branch})` : ""} · ${turns} turn${turns === 1 ? "" : "s"}`;
+}
+
+// The session list, like Claude Code's. Left arrow on an empty input opens it. It has every directory's
+// sessions, newest first, narrowed by what's typed. Enter switches to the pick, esc closes the list.
+type SessionItem = { name: string; description: string; id: string; cwd: string; search: string };
+let picker: { all: SessionItem[]; selected: number; query: string } | undefined;
+async function openPicker() {
+  const recent = await sessionsIn(undefined, 50);
+  const all = await Promise.all(
+    recent.map(async (r) => {
+      const state = r.id === sessionId ? "this session" : await sessionState(r.id);
+      const title = sessionTitle(r.session);
+      return {
+        name: title || "(no prompt)",
+        description: `${state ? `[${state}] ` : ""}${sessionPlace(r.session, r.mtime)}`,
+        id: r.id,
+        cwd: r.session.cwd,
+        search: `${r.session.cwd} ${title}`.toLowerCase(),
+      };
+    }),
+  );
+  if (!all.length) return tui.note("No saved sessions");
+  picker = { all, selected: 0, query: "" };
+  tui.render();
+}
+function pickerItems(): SessionItem[] {
+  if (!picker) return [];
+  if (rl.line !== picker.query) {
+    picker.query = rl.line;
+    picker.selected = 0;
+  }
+  const words = rl.line.toLowerCase().split(/\s+/).filter(Boolean);
+  return picker.all.filter((s) => words.every((w) => s.search.includes(w)));
+}
+function pickerView() {
+  const items = pickerItems();
+  if (!items.length) return undefined;
+  const selected = Math.min(picker!.selected, items.length - 1);
+  return { items, selected, prefix: "", title: "sessions · ↑↓ pick · enter switches · esc closes · type to narrow" };
+}
+function pickerKeys(keys: string): string {
+  const items = pickerItems();
+  const pick = items[Math.min(picker!.selected, items.length - 1)];
+  if (keys === "\x1b[A" || keys === "\x1bOA") picker!.selected = (picker!.selected - 1 + items.length) % Math.max(1, items.length);
+  else if (keys === "\x1b[B" || keys === "\x1bOB") picker!.selected = (picker!.selected + 1) % Math.max(1, items.length);
+  else if (keys === "\x1b" || ((keys === "\x1b[C" || keys === "\x1bOC") && !rl.line)) {
+    picker = undefined;
+    takeLine();
+  } else if (keys === "\r") {
+    if (pick) void switchTo(pick);
+  } else return keys;
+  tui.render();
+  return "";
+}
+async function switchTo(pick: SessionItem) {
+  if (pick.id === sessionId) {
+    picker = undefined;
+    takeLine();
+    return tui.render();
+  }
+  if ((await sessionState(pick.id)) === "open") return tui.note("That session is open in another terminal");
+  if (!existsSync(pick.cwd)) return tui.note(`${pick.cwd} is gone`);
+  picker = undefined;
+  tui.stop();
+  // Stop reading keys, so the next foxy-harness gets them.
+  process.stdin.removeAllListeners("data");
+  process.stdin.pause();
+  process.stdin.setRawMode?.(false);
+  await hooks.emit({ type: "SessionEnd", sessionId });
+  await markClosed(sessionId);
+  await handOff(pick.id, pick.cwd);
+}
+
+// The picked session runs in a new foxy-harness in its own directory, as `--resume <id>` would start it. One
+// already started this way hands the next pick back to the first by writing it to FOXY_HARNESS_NEXT and
+// exiting, so switching around doesn't stack up processes.
+async function handOff(id: string, dir: string): Promise<never> {
+  const next = process.env.FOXY_HARNESS_NEXT;
+  if (next) {
+    await Bun.write(next, JSON.stringify({ id, cwd: dir }));
+    process.exit(0);
+  }
+  const file = join(SESSIONS, `.next-${process.pid}.json`);
+  // A compiled binary runs itself, `bun src/cli.ts` runs the script again.
+  const self = Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
+  let target: { id: string; cwd: string } | undefined = { id, cwd: dir };
+  let code = 0;
+  while (target) {
+    await rm(file, { force: true });
+    const child = Bun.spawn([...self, "--resume", target.id, ...(yoloFlag ? ["--yolo"] : [])], {
+      cwd: target.cwd,
+      stdio: ["inherit", "inherit", "inherit"],
+      env: { ...process.env, FOXY_HARNESS_NEXT: file },
+    });
+    code = await child.exited;
+    target = await Bun.file(file)
+      .json()
+      .catch(() => undefined);
+  }
+  await rm(file, { force: true });
+  process.exit(code);
 }
 
 // Piped output only. Whether the model's text stopped partway through a line.
@@ -249,9 +380,8 @@ async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Da
   }
   if (!process.stdin.isTTY) exit("--resume without an id needs a terminal to pick from. Pass an id.");
   recent.forEach((r, i) => {
-    const turns = r.session.messages.filter((m) => m.role === "user").length;
     console.log(
-      `${cyan(String(i + 1).padStart(2))}  ${dim(`${ago(r.mtime).padEnd(12)} ${r.id.slice(0, 8)}  ${turns} turn${turns === 1 ? "" : "s"}`)}  ${sessionTitle(r.session).slice(0, 60)}`,
+      `${cyan(String(i + 1).padStart(2))}  ${sessionTitle(r.session).slice(0, 60)}  ${dim(`${sessionPlace(r.session, r.mtime)} · ${r.id.slice(0, 8)}`)}`,
     );
   });
   const answer = (await rl.question(dim(`Resume which? [1] `))).trim() || "1";
@@ -412,6 +542,11 @@ try {
 const { agent, hooks, instructions, skills, providerFor } = session;
 slashCommands = commands(skills);
 const provider = agent.provider;
+// Titles come from HARNESS_TITLE_MODEL, else Haiku for Claude, else the session's own model.
+const titleModel = () => {
+  const name = config.get("HARNESS_TITLE_MODEL") ?? (providerFamily(provider.name) === "claude" ? "haiku" : undefined);
+  return name ? providerFor(name) : undefined;
+};
 
 // A turn cut off by HARNESS_MAX_STEPS would otherwise look finished.
 hooks.on("Stop", (e) => {
@@ -526,6 +661,8 @@ async function turn(prompt: string) {
       if (withSkill) console.log(dim(`⏺ Using the ${prompt.slice(1).split(/\s/)[0]} skill`));
       tui.busy("Thinking");
       await agent.run(withSkill ?? prompt, controller.signal, attachments);
+      // Names the session for the session list, in the background.
+      void titleSession(agent, titleModel);
     }
   } catch (err) {
     console.error(red(String(err)));
@@ -576,6 +713,8 @@ const oneShot = args.join(" ").trim();
 if (oneShot) {
   await turn(oneShot);
 } else {
+  // Marks the session open for the session list, and interrupted if this process dies without exiting.
+  await markOpen(sessionId);
   // Full screen from here on, with the input pinned to the bottom. Readline's echo is replaced by the panel.
   // HARNESS_FULLSCREEN=0 keeps the plain line prompt.
   if (process.stdin.isTTY && process.stdout.isTTY && config.get("HARNESS_FULLSCREEN") !== "0") {
@@ -589,7 +728,7 @@ if (oneShot) {
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
   console.log(
     dim(
-      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, /<skill> runs a skill, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
+      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, /<skill> runs a skill, ← lists sessions to switch to, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
     ),
   );
   if (resumed) showRecap(resumed.session, resumed.mtime);

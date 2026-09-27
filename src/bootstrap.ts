@@ -116,6 +116,7 @@ export async function startSession(o: SessionOptions) {
     hooks,
     cwd,
     sessionId,
+    branch: gitBranch(cwd),
     system: buildSystemPrompt(cwd, tools, instructions, skills, provider.hostedTools),
     contextWindow: Number(config.get("HARNESS_CONTEXT_WINDOW")) || undefined,
     maxSteps: Number(config.get("HARNESS_MAX_STEPS")) || undefined,
@@ -128,7 +129,13 @@ export async function startSession(o: SessionOptions) {
     onCompact: frontend.onCompact,
     onSteer: frontend.onSteer,
   });
-  if (o.resumed) agent.restore(o.resumed.messages);
+  if (o.resumed) agent.restore(o.resumed.messages, o.resumed.title);
   await hooks.emit({ type: "SessionStart", sessionId, cwd, source: o.resumed ? "resume" : "startup" });
   return { agent, hooks, instructions, skills, providerFor };
+}
+
+// The checked-out branch, or nothing outside a git repo or on a detached HEAD.
+function gitBranch(cwd: string): string | undefined {
+  const r = Bun.spawnSync(["git", "branch", "--show-current"], { cwd, stdout: "pipe", stderr: "ignore" });
+  return (r.success && r.stdout.toString().trim()) || undefined;
 }
