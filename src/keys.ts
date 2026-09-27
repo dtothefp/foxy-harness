@@ -16,6 +16,9 @@ export function decodeKeys(s: string): string {
     const shift = mod & 1;
     const alt = mod & 2;
     const ctrl = mod & 4;
+    // Cmd (super, hyper or meta) shortcuts belong to the terminal. Ghostty passes Cmd+C through when it has
+    // nothing selected, and dropping the modifier would type a plain "c".
+    if (mod & ~7) return "";
     if (key === 13) return "\\\r";
     if (key === 9 && shift) return "\x1b[Z";
     let ch = String.fromCodePoint(key);
