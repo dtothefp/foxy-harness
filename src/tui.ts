@@ -42,6 +42,8 @@ export type InputView = {
   // Replaces the › prompt, for a question like "apply? [Y/n/reason]".
   label?: string;
   hint: string;
+  // The slash command menu, shown under the input in place of the hint.
+  menu?: { items: { name: string; description: string }[]; selected: number };
 };
 
 export function createTui(view: () => InputView, out: NodeJS.WriteStream = process.stdout) {
@@ -156,7 +158,8 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
     caret = { row: caret.row - first + 2, col: caret.col };
     const rule = `\x1b[2m${"─".repeat(w)}\x1b[0m`;
     const hint = flash || (scroll ? "scrolled back · PgDn or the wheel to return" : v.hint);
-    return [status(), rule, ...input.slice(first, first + max), rule, `\x1b[2m${hint}\x1b[0m`];
+    const footer = v.menu?.items.length && !flash ? menuRows(v.menu, w) : [`\x1b[2m${hint}\x1b[0m`];
+    return [status(), rule, ...input.slice(first, first + max), rule, ...footer];
   }
 
   function draw() {
@@ -499,6 +502,20 @@ function wrap(line: string, w: number): string[] {
   }
   rows.push(`${row}\x1b[0m`);
   return rows;
+}
+
+// Up to MENU_ROWS commands, scrolled to keep the selected one in view. Names in a column, descriptions after.
+const MENU_ROWS = 8;
+function menuRows(menu: NonNullable<InputView["menu"]>, w: number): string[] {
+  const { items, selected } = menu;
+  const first = Math.max(0, Math.min(selected - MENU_ROWS + 1, items.length - MENU_ROWS));
+  const shown = items.slice(first, first + MENU_ROWS);
+  const nameWidth = Math.min(Math.max(...shown.map((c) => c.name.length)) + 5, Math.floor(w * 0.4));
+  return shown.map((c, i) => {
+    const name = `/${c.name}`.slice(0, nameWidth - 2).padEnd(nameWidth - 2);
+    const description = c.description.replace(/\s+/g, " ");
+    return first + i === selected ? `  \x1b[1;36m${name}\x1b[0m  \x1b[36m${description}\x1b[0m` : `  ${name}  \x1b[2m${description}\x1b[0m`;
+  });
 }
 
 // Cuts a styled line to fit in `w` columns, one short so it never wraps.

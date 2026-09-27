@@ -38,7 +38,9 @@ export function keyInput(stdin: NodeJS.ReadStream): NodeJS.ReadableStream {
       mouseHandler?.({ button: Number(button), x: Number(x), y: Number(y), release: kind === "m" });
       return "";
     });
-    if (s) input.write(decodeKeys(s));
+    const keys = s && decodeKeys(s);
+    const passed = keys && keyFilter ? keyFilter(keys) : keys;
+    if (passed) input.write(passed);
   });
   process.stdout.write("\x1b[>4;2m");
   process.on("exit", () => process.stdout.write("\x1b[>4;0m"));
@@ -51,4 +53,12 @@ let mouseHandler: ((e: MouseEvent) => void) | undefined;
 // Receives mouse reports once a terminal has been asked for them (the full-screen view does, for the wheel).
 export function onMouse(handler: (e: MouseEvent) => void) {
   mouseHandler = handler;
+}
+
+let keyFilter: ((keys: string) => string) | undefined;
+
+// Sees decoded keys before readline does and returns what readline should get. The slash command menu uses
+// it to take arrows, tab and enter while it's open.
+export function onKeys(filter: (keys: string) => string) {
+  keyFilter = filter;
 }
