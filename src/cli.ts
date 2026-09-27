@@ -12,12 +12,14 @@ import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
 import { attachmentsInPrompt } from "./attachments.ts";
 import { ago, describeSession, shortModel } from "./inspect.ts";
+import { titleSession } from "./titles.ts";
 import { transcript } from "./transcript.ts";
 import {
   findSession,
   loadSession,
   markClosed,
   markOpen,
+  providerFamily,
   SESSIONS,
   type Session,
   sessionFiles,
@@ -115,6 +117,12 @@ function menuKeys(keys: string): string {
   return "";
 }
 
+// When and where a session ran, for the session lists. "2 h ago · claude-monorepo (main) · 4 turns".
+function sessionPlace(s: Session, mtime: Date) {
+  const turns = s.messages.filter((m) => m.role === "user").length;
+  return `${ago(mtime)} · ${basename(s.cwd)}${s.branch ? ` (${s.branch})` : ""} · ${turns} turn${turns === 1 ? "" : "s"}`;
+}
+
 // The session list, like Claude Code's. Left arrow on an empty input opens it. It has every directory's
 // sessions, newest first, narrowed by what's typed. Enter switches to the pick, esc closes the list.
 type SessionItem = { name: string; description: string; id: string; cwd: string; search: string };
@@ -126,8 +134,8 @@ async function openPicker() {
       const state = r.id === sessionId ? "this session" : await sessionState(r.id);
       const title = sessionTitle(r.session);
       return {
-        name: `${ago(r.mtime)} · ${basename(r.session.cwd)}`,
-        description: `${state ? `[${state}] ` : ""}${title}`,
+        name: title || "(no prompt)",
+        description: `${state ? `[${state}] ` : ""}${sessionPlace(r.session, r.mtime)}`,
         id: r.id,
         cwd: r.session.cwd,
         search: `${r.session.cwd} ${title}`.toLowerCase(),
@@ -372,9 +380,8 @@ async function resumeTarget(): Promise<{ id: string; session: Session; mtime: Da
   }
   if (!process.stdin.isTTY) exit("--resume without an id needs a terminal to pick from. Pass an id.");
   recent.forEach((r, i) => {
-    const turns = r.session.messages.filter((m) => m.role === "user").length;
     console.log(
-      `${cyan(String(i + 1).padStart(2))}  ${dim(`${ago(r.mtime).padEnd(12)} ${r.id.slice(0, 8)}  ${turns} turn${turns === 1 ? "" : "s"}`)}  ${sessionTitle(r.session).slice(0, 60)}`,
+      `${cyan(String(i + 1).padStart(2))}  ${sessionTitle(r.session).slice(0, 60)}  ${dim(`${sessionPlace(r.session, r.mtime)} · ${r.id.slice(0, 8)}`)}`,
     );
   });
   const answer = (await rl.question(dim(`Resume which? [1] `))).trim() || "1";
@@ -535,6 +542,11 @@ try {
 const { agent, hooks, instructions, skills, providerFor } = session;
 slashCommands = commands(skills);
 const provider = agent.provider;
+// Titles come from HARNESS_TITLE_MODEL, else Haiku for Claude, else the session's own model.
+const titleModel = () => {
+  const name = config.get("HARNESS_TITLE_MODEL") ?? (providerFamily(provider.name) === "claude" ? "haiku" : undefined);
+  return name ? providerFor(name) : undefined;
+};
 
 // A turn cut off by HARNESS_MAX_STEPS would otherwise look finished.
 hooks.on("Stop", (e) => {
@@ -649,6 +661,8 @@ async function turn(prompt: string) {
       if (withSkill) console.log(dim(`⏺ Using the ${prompt.slice(1).split(/\s/)[0]} skill`));
       tui.busy("Thinking");
       await agent.run(withSkill ?? prompt, controller.signal, attachments);
+      // Names the session for the session list, in the background.
+      void titleSession(agent, titleModel);
     }
   } catch (err) {
     console.error(red(String(err)));

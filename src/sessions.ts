@@ -3,6 +3,7 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_HOME } from "./auth/codex-oauth.ts";
 import type { Message } from "./providers/types.ts";
+import { SHELL_NOTE } from "./shell.ts";
 
 // Saved sessions, one JSON file per session id. Resume works like Claude Code's. --continue picks the
 // newest session in the current directory, --resume <id> a given one, --resume alone lists them.
@@ -12,6 +13,9 @@ export type Session = {
   model: string;
   settings?: Record<string, string>;
   cwd: string;
+  branch?: string;
+  // Written by a small model after the first few turns (titles.ts).
+  title?: string;
   messages: Message[];
 };
 
@@ -80,9 +84,10 @@ export async function sessionState(id: string): Promise<"open" | "interrupted" |
 export const providerFamily = (provider?: string, model = "") =>
   provider === "codex" || (!provider && /^(gpt|codex|o\d)/i.test(model)) ? "codex" : "claude";
 
-// The first thing the user asked, for the session list.
+// The generated title, or else the first thing the user asked, for the session list.
 export function sessionTitle(s: Session): string {
-  const first = s.messages.find((m) => m.role === "user");
+  if (s.title) return s.title;
+  const first = s.messages.find((m) => m.role === "user" && !m.text.startsWith(SHELL_NOTE));
   if (first?.role !== "user") return "";
   // A /skill prompt was sent with the skill's instructions ahead of it (see expandSkill).
   const skill = /^<skill name="([^"]+)"[\s\S]*?<\/skill>\s*([\s\S]*)$/.exec(first.text);

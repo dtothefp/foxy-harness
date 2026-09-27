@@ -17,6 +17,8 @@ export type AgentOptions = {
   hooks: Hooks;
   cwd: string;
   sessionId: string;
+  // The git branch the session started on, saved for the session list.
+  branch?: string;
   system: string;
   tools: Tool[];
   // Model calls per turn before the turn stops. Unlimited by default, like Claude Code. Ctrl+C stops a turn.
@@ -44,6 +46,8 @@ export type CompactInfo =
 
 export class Agent {
   messages: Message[] = [];
+  // A few words saying what the session is about, for the session list. See titles.ts.
+  title?: string;
   // Size of the next request: the last call's input + output, plus estimates for anything added since.
   contextTokens = 0;
   // Messages sent while a run is going. They go to the model at the next step of that run.
@@ -78,9 +82,15 @@ export class Agent {
     this.opts.provider = p;
   }
 
+  async setTitle(title: string) {
+    this.title = title;
+    await this.save();
+  }
+
   // Picks up a saved history. The context size is the last call's usage plus estimates for what came after.
-  restore(messages: Message[]) {
+  restore(messages: Message[], title?: string) {
     this.messages = messages;
+    this.title = title;
     const last = messages.findLastIndex((m) => m.role === "assistant" && m.usage?.inputTokens != null);
     const usage = last >= 0 && messages[last]!.role === "assistant" ? messages[last]!.usage : undefined;
     const base = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : estimateTokens(this.opts.system.length);
@@ -267,8 +277,9 @@ export class Agent {
 
   // What's saved to the session file, and what /session summarizes.
   snapshot() {
-    const { provider, cwd } = this.opts;
-    return { provider: provider.name, model: provider.model, settings: provider.settings, cwd, messages: this.messages };
+    const { provider, cwd, branch } = this.opts;
+    const { title, messages } = this;
+    return { provider: provider.name, model: provider.model, settings: provider.settings, cwd, branch, title, messages };
   }
 
   private async save() {
