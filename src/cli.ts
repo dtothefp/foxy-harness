@@ -13,7 +13,8 @@ import { transcript } from "./transcript.ts";
 import { findSession, loadSession, type Session, sessionFiles, sessionPath, sessionsIn, sessionTitle } from "./sessions.ts";
 import { listModels } from "./providers/codex.ts";
 import type { Usage } from "./providers/types.ts";
-import { keyInput, onMouse } from "./keys.ts";
+import { type Command, commands, expandSkill, matchCommands } from "./commands.ts";
+import { keyInput, onKeys, onMouse } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
 import { createTui } from "./tui.ts";
 import { renderChanges } from "./render.ts";
@@ -53,8 +54,45 @@ const tui = createTui(() => ({
       ? "shell command · enter runs it, the model sees the output with your next prompt"
       : current
         ? "enter steers the turn · esc interrupts"
-        : "enter sends · shift+enter for a newline · ctrl+d exits",
+        : "enter sends · shift+enter for a newline · / for commands · ctrl+d exits",
+  menu: menuView(),
 }));
+
+// The slash command menu. It's open while the input is just a slash and a name, with no space yet.
+// Arrows pick, tab completes, enter runs the pick, esc closes it until the text changes.
+let slashCommands: Command[] = [];
+let menuSelected = 0;
+let menuQuery: string | undefined;
+let menuClosedFor: string | undefined;
+function menuItems(): Command[] {
+  const line = rl.line;
+  if (!slashCommands.length || question || pendingLines.length || !/^\/\S*$/.test(line) || line === menuClosedFor) return [];
+  if (line !== menuQuery) {
+    menuQuery = line;
+    menuSelected = 0;
+  }
+  return matchCommands(slashCommands, line.slice(1));
+}
+function menuView() {
+  const items = menuItems();
+  return items.length ? { items, selected: Math.min(menuSelected, items.length - 1) } : undefined;
+}
+function menuKeys(keys: string): string {
+  const items = menuItems();
+  if (!items.length) return keys;
+  const pick = items[Math.min(menuSelected, items.length - 1)]!;
+  if (keys === "\x1b[A" || keys === "\x1bOA") menuSelected = (menuSelected - 1 + items.length) % items.length;
+  else if (keys === "\x1b[B" || keys === "\x1bOB") menuSelected = (menuSelected + 1) % items.length;
+  else if (keys === "\x1b") menuClosedFor = rl.line;
+  else if (keys === "\t" || keys === "\r") {
+    takeLine();
+    rl.write(keys === "\t" ? `/${pick.name} ` : `/${pick.name}`);
+    if (keys === "\r") return keys;
+  } else return keys;
+  tui.render();
+  return "";
+}
+
 // Piped output only. Whether the model's text stopped partway through a line.
 let midLine = false;
 
@@ -372,6 +410,7 @@ try {
   exit(err instanceof Error ? err.message : String(err));
 }
 const { agent, hooks, instructions, skills, providerFor } = session;
+slashCommands = commands(skills);
 const provider = agent.provider;
 
 // A turn cut off by HARNESS_MAX_STEPS would otherwise look finished.
@@ -482,8 +521,11 @@ async function turn(prompt: string) {
       for (const a of attachments)
         console.log(dim(`⏺ Attached ${a.name}${a.pages ? ` (${a.pages} page${a.pages === 1 ? "" : "s"})` : ""}`));
       for (const e of errors) console.log(red(`⏺ ${e}`));
+      // `/skill-name ...` sends the skill's instructions along with the request.
+      const withSkill = await expandSkill(prompt, skills, cwd);
+      if (withSkill) console.log(dim(`⏺ Using the ${prompt.slice(1).split(/\s/)[0]} skill`));
       tui.busy("Thinking");
-      await agent.run(prompt, controller.signal, attachments);
+      await agent.run(withSkill ?? prompt, controller.signal, attachments);
     }
   } catch (err) {
     console.error(red(String(err)));
@@ -541,12 +583,13 @@ if (oneShot) {
     tui.start();
     // The wheel scrolls, and a drag selects and copies.
     onMouse(tui.mouse);
+    onKeys(menuKeys);
   }
   const home = (p: string) => p.replace(homedir(), "~");
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
   console.log(
     dim(
-      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
+      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, /<skill> runs a skill, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
     ),
   );
   if (resumed) showRecap(resumed.session, resumed.mtime);
