@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 // `foxy-harness aoe [live|tmux] [--check]` sets up Agent of Empires for the harness in one go.
 // aoe's config.toml gets the harness registered, its status rules, and how opening a session behaves.
-// tmux.conf gets a small managed block so aoe's panes size right. Then aoe itself reads the file back,
+// tmux.conf gets a small managed block so aoe's panes size right and Shift+Enter reaches the harness. Then aoe itself reads the file back,
 // since it's the only thing that knows every key and value it accepts.
 // aoe rewrites config.toml with every default filled in, so this edits it in place rather than appending,
 // since a duplicate key makes aoe ignore the whole file.
@@ -32,6 +32,10 @@ const TMUX_BLOCK = `${TMUX_START}
 # when the same session is open in aoe and in another tmux client.
 set -g window-size latest
 setw -g aggressive-resize on
+# Pass modified keys like Shift+Enter through to programs that ask for them. Without it tmux sends a
+# plain Enter, and Shift+Enter submits the prompt instead of adding a newline.
+set -s extended-keys on
+set -as terminal-features ',xterm*:extkeys'
 ${TMUX_END}`;
 
 type Section = { header: string; start: number; end: number };
@@ -156,7 +160,10 @@ async function setupTmux(check: boolean): Promise<{ changed: boolean; message: s
   // Apply it to a running tmux server now. No server running is fine.
   const tmux = Bun.which("tmux");
   const reloaded = tmux && Bun.spawnSync([tmux, "source-file", path], { stderr: "pipe" }).exitCode === 0;
-  return { changed: true, message: `Updated ${shown}${reloaded ? " and reloaded tmux" : ""} (window-size latest, aggressive-resize on).` };
+  return {
+    changed: true,
+    message: `Updated ${shown}${reloaded ? " and reloaded tmux" : ""} (window-size latest, aggressive-resize on, extended keys).`,
+  };
 }
 
 function sections(lines: string[]): Section[] {
