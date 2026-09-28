@@ -1,5 +1,6 @@
 import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
 import { webSearchTool } from "../tools/web.ts";
+import { backoff, dropped, watchShown } from "./net.ts";
 import { sseEvents } from "./sse.ts";
 import {
   type Completion,
@@ -16,14 +17,24 @@ import {
 // ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
 const BASE = "https://chatgpt.com/backend-api/codex";
 const CONTEXT_WINDOW = 272_000;
+const RETRIES = 3;
 
 // effort is HARNESS_EFFORT (minimal, low, medium, high, xhigh). Codex CLI's default is medium.
 export function codexProvider(model: string, sessionId: string, effort = "medium"): Provider {
-  async function request(req: CompletionRequest, extra: unknown[] = []) {
-    let res = await send(req, model, sessionId, effort, false, extra);
-    if (res.status === 401) res = await send(req, model, sessionId, effort, true, extra);
-    if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
-    return readStream(res, req);
+  async function request(req: CompletionRequest, extra: unknown[] = []): Promise<Completion> {
+    for (let attempt = 0; ; attempt++) {
+      const watched = watchShown(req);
+      try {
+        let res = await send(req, model, sessionId, effort, false, extra);
+        if (res.status === 401) res = await send(req, model, sessionId, effort, true, extra);
+        if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
+        return await readStream(res, watched.req);
+      } catch (err) {
+        // The connection dropped. Send again, unless part of the reply is already on screen.
+        if (attempt >= RETRIES || watched.shown() || !dropped(err, req.signal)) throw err;
+        await backoff(attempt);
+      }
+    }
   }
   return {
     name: "codex",
@@ -124,6 +135,7 @@ function stripId(item: unknown) {
 async function readStream(res: Response, { onText, onReasoning, onServerTool }: CompletionRequest): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
+  let finished = false;
 
   for await (const ev of sseEvents(res)) {
     switch (ev.type) {
@@ -147,6 +159,7 @@ async function readStream(res: Response, { onText, onReasoning, onServerTool }: 
       case "response.completed":
       case "response.done":
       case "response.incomplete": {
+        finished = true;
         const u = ev.response?.usage;
         if (u) {
           out.usage = {
@@ -163,6 +176,8 @@ async function readStream(res: Response, { onText, onReasoning, onServerTool }: 
         throw new Error(`codex stream error: ${JSON.stringify(ev.error ?? ev.response?.error ?? ev)}`);
     }
   }
+  // Without a final response event the stream was cut off partway.
+  if (!finished) throw new Error("codex stream ended early: the connection closed before the reply finished.");
   return out;
 }
 
