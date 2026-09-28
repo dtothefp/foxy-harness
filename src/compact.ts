@@ -59,6 +59,7 @@ export async function summarize(provider: Provider, req: CompletionRequest): Pro
     messages: [...req.messages, { role: "user", text: SUMMARY_PROMPT }],
     onText: undefined,
     onReasoning: undefined,
+    onThinking: undefined,
   });
   const text = res.text.trim();
   if (!text) throw new Error("Compaction failed: the model returned no summary.");

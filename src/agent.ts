@@ -29,6 +29,7 @@ export type AgentOptions = {
   fakeTools?: ToolSpec[];
   onText?: (delta: string) => void;
   onReasoning?: (summary: string) => void;
+  onThinking?: (delta: string, end?: boolean) => void;
   // callId is the model's id for the call, the same one PreToolUse carries.
   onToolStart?: (name: string, input: unknown, changes: FileChange[] | undefined, callId: string) => void;
   onToolEnd?: (output: string, ok: boolean, changes: FileChange[] | undefined, name: string, input: unknown, callId: string) => void;
@@ -123,6 +124,7 @@ export class Agent {
           ...this.request(signal),
           onText: this.opts.onText,
           onReasoning: this.opts.onReasoning,
+          onThinking: this.opts.onThinking,
           // Already done by the time it's reported, so no hooks or permission, just the frontends.
           onServerTool: (c) => {
             this.opts.onToolStart?.(c.name, c.input, undefined, c.id);

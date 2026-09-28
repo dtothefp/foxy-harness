@@ -28,7 +28,10 @@ export function watchShown(req: CompletionRequest): { req: CompletionRequest; sh
       shown = true;
       fn(...a);
     });
-  return { req: { ...req, onText: mark(req.onText), onServerTool: mark(req.onServerTool) }, shown: () => shown };
+  return {
+    req: { ...req, onText: mark(req.onText), onThinking: mark(req.onThinking), onServerTool: mark(req.onServerTool) },
+    shown: () => shown,
+  };
 }
 
 export const backoff = (attempt: number) => Bun.sleep(Math.min(1000 * 2 ** attempt, 20_000));

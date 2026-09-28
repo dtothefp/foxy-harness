@@ -226,6 +226,40 @@ async function handOff(id: string, dir: string): Promise<never> {
 
 // Piped output only. Whether the model's text stopped partway through a line.
 let midLine = false;
+// A thinking block that's streaming. col is where the cursor is, tail a word that hasn't finished arriving.
+let thinking: { col: number; tail: string } | undefined;
+
+// Word-wraps a piece of streamed thinking to the terminal, two spaces in. Each line is styled on its own, since
+// the prompt redraw resets styles at line starts. A partial word waits for the rest unless the block has ended.
+function wrapThinking(t: { col: number; tail: string }, text: string, end?: boolean): string {
+  const width = (process.stdout.columns || 80) - 1;
+  const all = t.tail + text;
+  const cut = end ? all.length : Math.max(all.lastIndexOf(" "), all.lastIndexOf("\n")) + 1;
+  t.tail = all.slice(cut);
+  let out = "";
+  for (const tok of all.slice(0, cut).match(/\n|[^ \n]+ *| +/g) ?? []) {
+    if (tok === "\n") {
+      out += "\n";
+      t.col = 0;
+      continue;
+    }
+    if (t.col > 2 && t.col + tok.trimEnd().length > width) {
+      out += "\n";
+      t.col = 0;
+    }
+    if (t.col === 0) {
+      if (!tok.trim()) continue;
+      out += "  ";
+      t.col = 2;
+    }
+    out += tok;
+    t.col += tok.length;
+  }
+  return out
+    .split("\n")
+    .map((line) => line && dim(`\x1b[3m${line}\x1b[23m`))
+    .join("\n");
+}
 
 const args = process.argv.slice(2);
 const flag = (...names: string[]) => {
@@ -459,6 +493,22 @@ const frontend: Frontend = {
     midLine = !d.endsWith("\n");
   },
   onReasoning: (s) => console.log(dim(`\x1b[3m✻ ${s}\x1b[23m`)),
+  // Claude's thinking streams in as it's written, dim and italic, wrapped and indented under the ✻.
+  onThinking: (d, end) => {
+    if (!thinking) {
+      if (end) return;
+      md?.end();
+      if (midLine) process.stdout.write("\n");
+      process.stdout.write(dim("✻ "));
+      thinking = { col: 2, tail: "" };
+    }
+    process.stdout.write(wrapThinking(thinking, d, end));
+    if (end) {
+      process.stdout.write("\n\n");
+      thinking = undefined;
+      midLine = false;
+    }
+  },
   onToolStart: (name, input, changes) => {
     // Hosted searches are reported mid-reply, so end the line the model was writing.
     md?.end();
