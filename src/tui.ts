@@ -15,10 +15,10 @@ import { format } from "node:util";
 // pane titles in Agent of Empires) tell whether an agent is busy. A braille spinner frame while working,
 // ✋ while a permission question waits, ✳ when idle at the prompt.
 
-const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+export const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 // Synchronized output, so a redraw doesn't flicker in terminals that support it.
-const BEGIN = "\x1b[?2026h\x1b[?25l";
-const END = "\x1b[?25h\x1b[?2026l";
+export const BEGIN = "\x1b[?2026h\x1b[?25l";
+export const END = "\x1b[?25h\x1b[?2026l";
 // Alternate screen, plus mouse reports in SGR format for the wheel and for selecting (1002 adds drags).
 const ENTER = "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 const LEAVE = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l";
@@ -136,31 +136,10 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
   }
 
   function panel(): string[] {
-    const w = width();
-    const v = view();
-    const prompt = v.label ? `\x1b[2m${v.label}\x1b[0m` : "\x1b[36m›\x1b[0m ";
-    const indent = Bun.stringWidth(prompt);
-    const room = Math.max(10, w - indent - 1);
-    const input: string[] = [];
-    v.lines.forEach((line, i) => {
-      const wrapped = chunk(line, room);
-      if (i === v.lines.length - 1) {
-        // The cursor may sit just past a full row.
-        const before = Bun.stringWidth(line.slice(0, v.cursor));
-        const r = Math.floor(before / room);
-        if (r >= wrapped.length) wrapped.push("");
-        caret = { row: input.length + r, col: indent + before - r * room };
-      }
-      for (const text of wrapped) input.push(`${input.length ? " ".repeat(indent) : prompt}${text}`);
-    });
-    // Long input shows the rows around the cursor.
-    const max = Math.max(1, Math.floor(height() / 3));
-    const first = Math.max(0, Math.min(caret.row - max + 1, input.length - max));
-    caret = { row: caret.row - first + 2, col: caret.col };
-    const rule = `\x1b[2m${"─".repeat(w)}\x1b[0m`;
-    const hint = flash || (scroll ? "scrolled back · PgDn or the wheel to return" : v.hint);
-    const footer = v.menu?.items.length && !flash ? menuRows(v.menu, w) : [`\x1b[2m${hint}\x1b[0m`];
-    return [status(), rule, ...input.slice(first, first + max), rule, ...footer];
+    const hint = flash || (scroll ? "scrolled back · PgDn or the wheel to return" : undefined);
+    const p = panelRows(view(), width(), height(), status(), hint);
+    caret = p.caret;
+    return p.rows;
   }
 
   function draw() {
@@ -460,6 +439,34 @@ function highlight(row: string, from: number, to: number): string {
   return on ? `${out}\x1b[27m` : out;
 }
 
+// The panel under the output. A status line, the input between two rules, then the hint or a menu. The caret
+// is where the cursor goes, relative to the panel's top. `hint` replaces the view's own, like a flash note.
+export function panelRows(v: InputView, w: number, h: number, status: string, hint?: string) {
+  const prompt = v.label ? `\x1b[2m${v.label}\x1b[0m` : "\x1b[36m›\x1b[0m ";
+  const indent = Bun.stringWidth(prompt);
+  const room = Math.max(10, w - indent - 1);
+  const input: string[] = [];
+  let caret = { row: 0, col: 0 };
+  v.lines.forEach((line, i) => {
+    const wrapped = chunk(line, room);
+    if (i === v.lines.length - 1) {
+      // The cursor may sit just past a full row.
+      const before = Bun.stringWidth(line.slice(0, v.cursor));
+      const r = Math.floor(before / room);
+      if (r >= wrapped.length) wrapped.push("");
+      caret = { row: input.length + r, col: indent + before - r * room };
+    }
+    for (const text of wrapped) input.push(`${input.length ? " ".repeat(indent) : prompt}${text}`);
+  });
+  // Long input shows the rows around the cursor.
+  const max = Math.max(1, Math.floor(h / 3));
+  const first = Math.max(0, Math.min(caret.row - max + 1, input.length - max));
+  caret = { row: caret.row - first + 2, col: caret.col };
+  const rule = `\x1b[2m${"─".repeat(w)}\x1b[0m`;
+  const footer = v.menu?.items.length && !hint ? menuRows(v.menu, w) : [`\x1b[2m${hint || v.hint}\x1b[0m`];
+  return { rows: [status, rule, ...input.slice(first, first + max), rule, ...footer], caret };
+}
+
 // Splits plain text into rows of at most `room` columns.
 function chunk(text: string, room: number): string[] {
   const rows = [""];
@@ -477,7 +484,7 @@ function chunk(text: string, room: number): string[] {
 }
 
 // Wraps a styled line to `w` columns. Each row restarts the styles in effect, so rows draw on their own.
-function wrap(line: string, w: number): string[] {
+export function wrap(line: string, w: number): string[] {
   const rows: string[] = [];
   let row = "";
   let used = 0;
@@ -522,7 +529,7 @@ function menuRows(menu: NonNullable<InputView["menu"]>, w: number): string[] {
 }
 
 // Cuts a styled line to fit in `w` columns, one short so it never wraps.
-function cut(line: string, w: number): string {
+export function cut(line: string, w: number): string {
   if (Bun.stringWidth(line) < w) return line;
   let out = "";
   let used = 0;
