@@ -14,7 +14,10 @@ import { toolsFor } from "./tools/index.ts";
 
 export type PreToolUse = Extract<HarnessEvent, { type: "PreToolUse" }>;
 
-export type Frontend = Pick<AgentOptions, "onText" | "onReasoning" | "onToolStart" | "onToolEnd" | "onStep" | "onCompact" | "onSteer"> & {
+export type Frontend = Pick<
+  AgentOptions,
+  "onText" | "onReasoning" | "onThinking" | "onToolStart" | "onToolEnd" | "onStep" | "onCompact" | "onSteer"
+> & {
   // Asks before an edit or a bash command runs. Returns { block } to deny. Without it everything runs (--yolo).
   askPermission?: (e: PreToolUse) => Promise<HookResult>;
   // One-line notices, like a package's AGENTS.md being picked up.
@@ -123,6 +126,7 @@ export async function startSession(o: SessionOptions) {
     fakeTools: o.fakeTools,
     onText: frontend.onText,
     onReasoning: frontend.onReasoning,
+    onThinking: frontend.onThinking,
     onToolStart: frontend.onToolStart,
     onToolEnd: frontend.onToolEnd,
     onStep: frontend.onStep,

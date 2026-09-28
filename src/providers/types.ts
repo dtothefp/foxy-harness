@@ -32,6 +32,9 @@ export type CompletionRequest = {
   onText?: (delta: string) => void;
   // One short line per reasoning step (a summary heading), for models that expose one.
   onReasoning?: (summary: string) => void;
+  // Reasoning text as it streams, for models whose summaries read as prose (Claude). end marks the end of a block.
+  // Providers that call this don't also report the block through onReasoning.
+  onThinking?: (delta: string, end?: boolean) => void;
   onServerTool?: (call: ServerToolCall) => void;
 };
 

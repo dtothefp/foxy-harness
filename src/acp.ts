@@ -95,6 +95,7 @@ export async function runAcp(config: Config, flags: { provider?: string; model?:
           content: { type: "text", text },
         }),
       onReasoning: (text) => update(live, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: `${text}\n` } }),
+      onThinking: (text, end) => update(live, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: end ? "\n" : text } }),
       onToolStart: (name, input, changes, callId) => {
         if (live.announced.has(callId)) update(live, { sessionUpdate: "tool_call_update", toolCallId: callId, status: "in_progress" });
         else update(live, { ...toolCall(name, input, changes, callId, cwd), status: "in_progress" });

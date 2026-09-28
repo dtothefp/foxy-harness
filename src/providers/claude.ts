@@ -69,6 +69,9 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
   let dropImages = false;
   // HARNESS_WEB_SEARCH=local uses the harness's own search, for orgs that turned the server tool off.
   const hostedSearch = transport === "anthropic" && config.get("HARNESS_WEB_SEARCH") !== "local";
+  // HARNESS_THINKING=line shows one line per thinking block, like Codex, instead of streaming the text.
+  const streamThinking = config.get("HARNESS_THINKING") !== "line";
+  settings.thinkingDisplay = streamThinking ? "full" : "line";
 
   async function send(req: CompletionRequest, extra: Record<string, unknown> = {}): Promise<Completion> {
     // Every request that carries a compaction block needs the beta header, not just the one that made it.
@@ -99,7 +102,8 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
         const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
         const watched = watchShown(req);
         try {
-          return await readStream(binary ? eventStreamEvents(res) : sseEvents(res), watched.req);
+          const shown = streamThinking ? watched.req : { ...watched.req, onThinking: undefined };
+          return await readStream(binary ? eventStreamEvents(res) : sseEvents(res), shown);
         } catch (err) {
           // The connection dropped mid-reply. Send again, unless part of the reply is already on screen.
           if (attempt < RETRIES && !watched.shown() && dropped(err, req.signal)) {
@@ -325,7 +329,10 @@ function toMessages(messages: Message[]) {
   return out;
 }
 
-async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onServerTool }: CompletionRequest): Promise<Completion> {
+async function readStream(
+  events: AsyncIterable<any>,
+  { onText, onReasoning, onThinking, onServerTool }: CompletionRequest,
+): Promise<Completion> {
   const started = performance.now();
   const out: Completion = { text: "", toolCalls: [], raw: [], usage: {} };
   const blocks: Block[] = [];
@@ -362,8 +369,10 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
           out.text += d.text;
           onText?.(d.text);
         } else if (d.type === "input_json_delta") json[ev.index] += d.partial_json;
-        else if (d.type === "thinking_delta") b.thinking = (b.thinking ?? "") + d.thinking;
-        else if (d.type === "signature_delta") b.signature = d.signature;
+        else if (d.type === "thinking_delta") {
+          b.thinking = (b.thinking ?? "") + d.thinking;
+          if (d.thinking) onThinking?.(d.thinking);
+        } else if (d.type === "signature_delta") b.signature = d.signature;
         break;
       }
       case "content_block_stop": {
@@ -375,10 +384,13 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
           const use = blocks.find((u) => u?.type === "server_tool_use" && u.id === b.tool_use_id);
           onServerTool?.({ id: b.tool_use_id, name: use?.name ?? "web_search", input: use?.input ?? {}, ...searchOutput(b.content) });
         }
-        // Summarized thinking arrives whole before the block stops. Hidden ("omitted") thinking is empty.
-        if (b.type === "thinking") {
-          const line = reasoningHeading(b.thinking ?? "");
-          if (line) onReasoning?.(line);
+        // Hidden ("omitted") thinking is empty, so nothing shows for it.
+        if (b.type === "thinking" && b.thinking) {
+          if (onThinking) onThinking("", true);
+          else {
+            const line = reasoningHeading(b.thinking);
+            if (line) onReasoning?.(line);
+          }
         }
         break;
       }
