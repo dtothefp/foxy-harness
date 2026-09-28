@@ -1,6 +1,7 @@
 import type { Config } from "../config.ts";
 import { webSearchTool } from "../tools/web.ts";
 import { eventStreamEvents } from "./eventstream.ts";
+import { backoff, dropped, watchShown } from "./net.ts";
 import { sseEvents } from "./sse.ts";
 import {
   type Completion,
@@ -83,13 +84,28 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
         ...(effort ? { output_config: { effort } } : {}),
         ...extra,
       });
-      const res = await fetch(endpoint.url, { method: "POST", signal: req.signal, headers, body });
+      let res: Response;
+      try {
+        res = await fetch(endpoint.url, { method: "POST", signal: req.signal, headers, body });
+      } catch (err) {
+        if (attempt < RETRIES && dropped(err, req.signal)) {
+          await backoff(attempt);
+          continue;
+        }
+        throw err;
+      }
       if (res.ok) {
         // Bedrock streams AWS event frames. The direct API and some gateways stream SSE.
         const binary = res.headers.get("content-type")?.includes("amazon.eventstream");
+        const watched = watchShown(req);
         try {
-          return await readStream(binary ? eventStreamEvents(res) : sseEvents(res), req);
+          return await readStream(binary ? eventStreamEvents(res) : sseEvents(res), watched.req);
         } catch (err) {
+          // The connection dropped mid-reply. Send again, unless part of the reply is already on screen.
+          if (attempt < RETRIES && !watched.shown() && dropped(err, req.signal)) {
+            await backoff(attempt);
+            continue;
+          }
           if (!(err instanceof NoReply) || req.signal?.aborted) throw err;
           emptyReplies++;
           // Once as is, in case it was a blip. Then without the older images.
@@ -110,8 +126,8 @@ export function claudeProvider(transport: ClaudeTransport, model: string, config
       }
       // 429 rate limited, 529 overloaded, other 5xx: back off and retry.
       if (attempt < RETRIES && (res.status === 429 || res.status >= 500)) {
-        const wait = Number(res.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
-        await Bun.sleep(Math.min(wait, 20_000));
+        const wait = Number(res.headers.get("retry-after")) * 1000;
+        await (wait ? Bun.sleep(Math.min(wait, 20_000)) : backoff(attempt));
         continue;
       }
       throw new Error(`${transport} ${res.status}: ${text}`);
@@ -381,6 +397,8 @@ async function readStream(events: AsyncIterable<any>, { onText, onReasoning, onS
     throw new NoReply(
       `claude stream ended before message_start. The endpoint answered but sent ${unknown.length ? `this instead: ${unknown.join("\n")}` : "nothing"}.`,
     );
+  // Every finished reply carries a stop reason. Without one the stream was cut off partway.
+  if (!out.stopReason) throw new Error("claude stream ended early: the connection closed before the reply finished.");
   // Replayed verbatim next turn (thinking blocks need their signatures). Empty text blocks are rejected.
   out.raw = blocks.filter((b) => b && !(b.type === "text" && !b.text));
   return out;
