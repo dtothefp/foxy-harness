@@ -2,7 +2,8 @@ import type { Attachment } from "../providers/types.ts";
 import type { Tool, ToolContext } from "./types.ts";
 
 // web_fetch runs here for every provider. web_search runs on the provider's side where the backend has it
-// (Codex, the Claude API) and here otherwise (Bedrock), through DuckDuckGo's HTML page.
+// (Codex, the Claude API) and here otherwise (Bedrock), through DuckDuckGo's HTML page, or Bing's when
+// DuckDuckGo turns the request away. Corporate networks often get DuckDuckGo's bot challenge.
 
 const MAX_CHARS = 40_000;
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -68,25 +69,25 @@ export const webSearchTool: Tool = {
   async run(input, ctx) {
     const { query } = input as { query?: unknown };
     if (typeof query !== "string" || !query.trim()) return { output: "Invalid arguments: `query` must be a non-empty string.", ok: false };
-    const res = await get(
+    const ddg = await get(
       "https://html.duckduckgo.com/html/",
       ctx,
       { "content-type": "application/x-www-form-urlencoded" },
       `q=${encodeURIComponent(query)}`,
     );
-    const html = await res.text();
-    const results = parseDuckDuckGo(html);
+    let results = parseDuckDuckGo(await ddg.text());
+    let failed = ddg.ok ? "" : `DuckDuckGo ${ddg.status}`;
+    if (!results.length) {
+      const bing = await get(`https://www.bing.com/search?q=${encodeURIComponent(query)}`, ctx, { "accept-language": "en-US,en;q=0.9" });
+      results = parseBing(await bing.text());
+      if (!bing.ok) failed = `${failed ? `${failed}, ` : ""}Bing ${bing.status}`;
+    }
     if (results.length)
       return {
         output: results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`).join("\n"),
         ok: true,
       };
-    // DuckDuckGo answers bots it doesn't like with a challenge page instead of results.
-    if (!res.ok || /anomaly|captcha|challenge/i.test(html))
-      return {
-        output: `Search failed (DuckDuckGo ${res.status}, blocked or rate limited). Try again later or fetch a known URL.`,
-        ok: false,
-      };
+    if (failed) return { output: `Search failed (${failed}, blocked or rate limited). Try again later or fetch a known URL.`, ok: false };
     return { output: "No results.", ok: true };
   },
 };
@@ -182,6 +183,27 @@ function parseDuckDuckGo(html: string): { title: string; url: string; snippet: s
     if (/duckduckgo\.com\/y\.js/.test(url)) continue; // ads
     const snippet = part.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/)?.[1] ?? "";
     out.push({ title: strip(title), url, snippet: strip(snippet) });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+// Bing's result links go through its click tracker, with the real URL base64url encoded in `u` after "a1".
+function parseBing(html: string): { title: string; url: string; snippet: string }[] {
+  const out: { title: string; url: string; snippet: string }[] = [];
+  const strip = (s: string) =>
+    decodeEntities(s.replace(/<[^>]+>/g, ""))
+      .replace(/\s+/g, " ")
+      .trim();
+  for (const part of html.split(/<li class="b_algo"/).slice(1)) {
+    const link = part.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
+    if (!link) continue;
+    const href = decodeEntities(link[1]!);
+    const encoded = href.match(/[?&]u=a1([^&]+)/)?.[1];
+    const url = encoded ? Buffer.from(encoded, "base64url").toString() : href;
+    if (!/^https?:\/\//.test(url)) continue;
+    const snippet = part.match(/<p[^>]*>([\s\S]*?)<\/p>/)?.[1]?.replace(/<a[\s\S]*?<\/a>/g, "") ?? "";
+    out.push({ title: strip(link[2]!), url, snippet: strip(snippet) });
     if (out.length >= 10) break;
   }
   return out;
