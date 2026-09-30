@@ -7,6 +7,7 @@ export type Command = { name: string; description: string; skill?: Skill };
 
 export const BUILTINS: Command[] = [
   { name: "model", description: "Switch the model, or list the named aliases" },
+  { name: "clear", description: "Start a new session, on the same model" },
   { name: "session", description: "Show what the model sent back this session" },
   { name: "compact", description: "Summarize the conversation to free up context" },
 ];

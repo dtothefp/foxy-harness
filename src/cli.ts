@@ -33,6 +33,7 @@ import type { Usage } from "./providers/types.ts";
 import { type Command, commands, expandSkill, matchCommands } from "./commands.ts";
 import { keyInput, onKeys, onMouse } from "./keys.ts";
 import { markdownStream } from "./markdown.ts";
+import { createInlineTui } from "./inline.ts";
 import { createTui } from "./tui.ts";
 import { renderChanges } from "./render.ts";
 import { userShell } from "./shell.ts";
@@ -59,23 +60,6 @@ const webLabel = (name: string, input: unknown) => {
   return name === "web_fetch" ? `Fetch(${url})` : query != null ? `Search(${JSON.stringify(query)})` : `Open(${url})`;
 };
 const isWeb = (name: string) => name === "web_search" || name === "web_fetch";
-
-// The pinned input at the bottom draws from readline's line plus earlier lines of a multi-line prompt.
-const tui = createTui(() => ({
-  lines: [...pendingLines, rl.line],
-  cursor: rl.cursor,
-  label: question,
-  hint: question
-    ? "enter answers · esc stops the turn"
-    : [...pendingLines, rl.line][0]?.startsWith("!")
-      ? "shell command · enter runs it, the model sees the output with your next prompt"
-      : current
-        ? "enter steers the turn · esc interrupts"
-        : picker
-          ? "no sessions match"
-          : "enter sends · shift+enter for a newline · / for commands · ← sessions · ctrl+d exits",
-  menu: picker ? pickerView() : menuView(),
-}));
 
 // The slash command menu. It's open while the input is just a slash and a name, with no space yet.
 // Arrows pick, tab completes, enter runs the pick, esc closes it until the text changes.
@@ -184,6 +168,12 @@ async function switchTo(pick: SessionItem) {
   if ((await sessionState(pick.id)) === "open") return tui.note("That session is open in another terminal");
   if (!existsSync(pick.cwd)) return tui.note(`${pick.cwd} is gone`);
   picker = undefined;
+  await leave();
+  await handOff(["--resume", pick.id], pick.cwd);
+}
+
+// Ends this session's hold on the terminal and the session file, before another foxy-harness takes over.
+async function leave() {
   tui.stop();
   // Stop reading keys, so the next foxy-harness gets them.
   process.stdin.removeAllListeners("data");
@@ -191,26 +181,25 @@ async function switchTo(pick: SessionItem) {
   process.stdin.setRawMode?.(false);
   await hooks.emit({ type: "SessionEnd", sessionId });
   await markClosed(sessionId);
-  await handOff(pick.id, pick.cwd);
 }
 
-// The picked session runs in a new foxy-harness in its own directory, as `--resume <id>` would start it. One
-// already started this way hands the next pick back to the first by writing it to FOXY_HARNESS_NEXT and
-// exiting, so switching around doesn't stack up processes.
-async function handOff(id: string, dir: string): Promise<never> {
+// The picked session runs in a new foxy-harness in its own directory, as `--resume <id>` would start it
+// (/clear starts one with no session to resume). One already started this way hands the next pick back to
+// the first by writing it to FOXY_HARNESS_NEXT and exiting, so switching around doesn't stack up processes.
+async function handOff(flags: string[], dir: string): Promise<never> {
   const next = process.env.FOXY_HARNESS_NEXT;
   if (next) {
-    await Bun.write(next, JSON.stringify({ id, cwd: dir }));
+    await Bun.write(next, JSON.stringify({ flags, cwd: dir }));
     process.exit(0);
   }
   const file = join(SESSIONS, `.next-${process.pid}.json`);
   // A compiled binary runs itself, `bun src/cli.ts` runs the script again.
   const self = Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
-  let target: { id: string; cwd: string } | undefined = { id, cwd: dir };
+  let target: { flags: string[]; cwd: string } | undefined = { flags, cwd: dir };
   let code = 0;
   while (target) {
     await rm(file, { force: true });
-    const child = Bun.spawn([...self, "--resume", target.id, ...(yoloFlag ? ["--yolo"] : [])], {
+    const child = Bun.spawn([...self, ...target.flags, ...(yoloFlag ? ["--yolo"] : [])], {
       cwd: target.cwd,
       stdio: ["inherit", "inherit", "inherit"],
       env: { ...process.env, FOXY_HARNESS_NEXT: file },
@@ -291,6 +280,24 @@ const sessionIdArg = option("--session-id");
 const config = await loadConfig();
 // Skip permission prompts. HARNESS_YOLO=1 makes it the default, like Claude Code's bypassPermissions mode.
 const yolo = yoloFlag || config.get("HARNESS_YOLO") === "1";
+// The pinned input at the bottom draws from readline's line plus earlier lines of a multi-line prompt.
+// HARNESS_TUI=inline draws it inline instead of full screen, leaving the output in the terminal's scrollback.
+const tui = (config.get("HARNESS_TUI") === "inline" ? createInlineTui : createTui)(() => ({
+  lines: [...pendingLines, rl.line],
+  cursor: rl.cursor,
+  label: question,
+  hint: question
+    ? "enter answers · esc stops the turn"
+    : [...pendingLines, rl.line][0]?.startsWith("!")
+      ? "shell command · enter runs it, the model sees the output with your next prompt"
+      : current
+        ? "enter steers the turn · esc interrupts"
+        : picker
+          ? "no sessions match"
+          : "enter sends · shift+enter for a newline · / for commands · ← sessions · ctrl+d exits",
+  menu: picker ? pickerView() : menuView(),
+}));
+
 const modelFlag = option("--model");
 const providerFlag = option("--provider");
 
@@ -653,7 +660,7 @@ rl.on("line", (line) => {
     tui.render();
     return console.log(dim("⏺ Commands and ! shell commands wait for the turn to finish. esc stops it."));
   }
-  console.log(dim("⏺ Queued, it goes in after the current step"));
+  console.log(dim("⏺ Steering, it goes in at the next step"));
   void attachmentsInPrompt(text, cwd).then(({ attachments }) => agent.steer(text, attachments.length ? attachments : undefined));
 });
 
@@ -694,6 +701,11 @@ async function turn(prompt: string) {
       if (!name && aliases.length) {
         console.log(dim(aliases.map(([alias, model]) => `  ${alias}  ${shortModel(model)}`).join("\n")));
       }
+    } else if (prompt === "/clear") {
+      // A new session in a new foxy-harness, on the model in use now. What's on screen stays in the scrollback.
+      console.log(dim("⏺ Starting a new session"));
+      await leave();
+      await handOff(["--provider", agent.provider.name, "--model", agent.provider.model], cwd);
     } else if (prompt === "/session") {
       console.log(describeSession(agent.snapshot(), `session ${sessionId.slice(0, 8)} · this one`));
     } else if (prompt.startsWith("!")) {
@@ -778,7 +790,7 @@ if (oneShot) {
   const loaded = `${instructions ? home(instructions.path) : "no AGENTS.md"} · ${skills.length} skills`;
   console.log(
     dim(
-      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /session shows what the model sent back, /compact summarizes the conversation, /<skill> runs a skill, ← lists sessions to switch to, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
+      `foxy-harness · ${provider.name} · ${shortModel(provider.model)} · ${cwd}\n${loaded} · session ${sessionId.slice(0, 8)}\n/model switches models, /clear starts a new session, /session shows what the model sent back, /compact summarizes the conversation, /<skill> runs a skill, ← lists sessions to switch to, !command runs a shell command, shift+enter (or a trailing \\) for a newline, enter mid-turn steers it, esc or ctrl+c interrupts, ctrl+d exits`,
     ),
   );
   if (resumed) showRecap(resumed.session, resumed.mtime);
