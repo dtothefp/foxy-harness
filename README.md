@@ -96,6 +96,8 @@ foxy-harness = "foxy-harness"
 foxy-harness = "foxy-harness --acp"
 ```
 
+Orca. Its agent picker is a fixed list of built-in agents, each shown only when Orca finds its command on your PATH, so there's no way to add the harness by name. `foxy-harness orca` writes `~/.local/bin/crush`, a two-line script that runs foxy-harness and drops the arguments Orca passes. Quit and reopen Orca, then pick Crush under Agent. It keeps Crush's name and icon, and Orca's status dot won't follow the harness. If you use Crush, pick another built-in you don't have with `--as goose` (it refuses a name that's already installed). `--check` shows what it would do, `--remove` deletes the script, and it warns when `~/.local/bin` isn't on your PATH.
+
 ## Configuration
 
 Nothing is hardcoded. Settings come from three places, later wins.
@@ -184,6 +186,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - `src/agent.ts` is the loop. Call the model, run tool calls, feed results back, stop when the model replies without a tool call.
 - `src/bootstrap.ts` sets up a session (provider, tools, instructions, skills, command hooks, the agent) for any frontend. `src/cli.ts` is the terminal frontend and `src/acp.ts` the ACP one. It supplies the rendering callbacks and the permission prompt.
 - `src/envrc.ts` is `foxy-harness envrc`, which adds empty model exports to `~/.envrc`.
+- `src/orca.ts` is `foxy-harness orca`, which lists the harness in Orca's agent picker under a built-in agent's name.
 - `src/aoe.ts` is `foxy-harness aoe`, which sets up Agent of Empires' config and tmux.conf for the harness and checks the result with aoe.
 - `src/events.ts` names lifecycle events after Claude Code hooks: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, Stop, SessionEnd. The permission prompt is just a PreToolUse handler.
 - `src/context.ts` finds instruction files and skills. Package instructions arrive through a PostToolUse hook that returns `{ context }`, which the agent appends to the tool result.
