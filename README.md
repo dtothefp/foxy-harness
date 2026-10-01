@@ -96,7 +96,7 @@ foxy-harness = "foxy-harness"
 foxy-harness = "foxy-harness --acp"
 ```
 
-Orca. Its agent picker is a fixed list of built-in agents, each shown only when Orca finds its command on your PATH, so there's no way to add the harness by name. `foxy-harness orca` writes `~/.local/bin/crush`, a two-line script that runs foxy-harness and drops the arguments Orca passes. Quit and reopen Orca, then pick Crush under Agent. It keeps Crush's name and icon, and Orca's status dot won't follow the harness. If you use Crush, pick another built-in you don't have with `--as goose` (it refuses a name that's already installed). `--check` shows what it would do, `--remove` deletes the script, and it warns when `~/.local/bin` isn't on your PATH.
+Orca. Its agent picker is a fixed list of built-in agents, each shown only when Orca finds its command on your PATH, so there's no way to add the harness by name. `foxy-harness orca` writes `~/.local/bin/crush`, a two-line script that runs foxy-harness and drops the arguments Orca passes. Quit and reopen Orca, then pick Charm under Agent (Orca's name for Crush, Charm's coding agent). It keeps Charm's name and icon, and Orca's status dot won't follow the harness. If you use Crush, pick another built-in you don't have with `--as goose` (it refuses a name that's already installed). `--check` shows what it would do, `--remove` deletes the script, and it warns when `~/.local/bin` isn't on your PATH.
 
 ## Configuration
 

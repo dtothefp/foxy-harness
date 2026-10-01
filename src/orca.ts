@@ -5,11 +5,13 @@ import { delimiter, join } from "node:path";
 // `foxy-harness orca [--as <agent>] [--check] [--remove]` makes foxy-harness pickable in Orca.
 // Orca's agent picker is a fixed list of built-in agents, shown only when it finds their command on PATH,
 // and there's no way to add one. So this puts a small script named after a built-in you don't use (Crush by
-// default) in ~/.local/bin. Orca finds it, lists that agent, and launching it starts foxy-harness.
+// default, which Orca labels Charm) in ~/.local/bin. Orca finds it, lists that agent, and launching it starts foxy-harness.
 // It drops the arguments Orca passes, since those are the other agent's flags.
 
 const NAME = "foxy-harness";
 const MARKER = `# Managed by \`${NAME} orca\`.`;
+// What Orca calls an agent in its picker, where that isn't the command's name.
+const LABELS: Record<string, string> = { crush: "Charm" };
 
 export async function setupOrca({
   agent = "crush",
@@ -17,6 +19,7 @@ export async function setupOrca({
   remove = false,
 }: { agent?: string; check?: boolean; remove?: boolean } = {}): Promise<string> {
   if (!/^[a-z][a-z0-9-]*$/.test(agent)) throw new Error(`"${agent}" isn't an agent command name.`);
+  const label = LABELS[agent] ?? agent;
   const dir = join(homedir(), ".local", "bin");
   const path = join(dir, agent);
   const ours = existsSync(path) && (await Bun.file(path).text()).includes(MARKER);
@@ -25,7 +28,7 @@ export async function setupOrca({
     if (!existsSync(path)) return `${path} isn't there. Nothing to remove.`;
     if (!ours) throw new Error(`${path} wasn't written by ${NAME} orca. Leaving it alone.`);
     if (!check) rmSync(path);
-    return `${check ? "Would remove" : "Removed"} ${path}. Restart Orca and ${agent} leaves the agent list.`;
+    return `${check ? "Would remove" : "Removed"} ${path}. Restart Orca and ${label} leaves the agent list.`;
   }
 
   // A real install of that agent would be shadowed or replaced. Pick another one.
@@ -55,8 +58,8 @@ export async function setupOrca({
   if (!onPath) out.push(`! ${dir} isn't on your PATH. Add it in your shell rc, or Orca won't find ${agent}.`);
   out.push(
     "",
-    `Quit Orca and open it again (it looks for agents at startup). Then pick ${agent} under Agent when you create a`,
-    `workspace. It keeps ${agent}'s name and icon, and Orca's status dot won't follow the harness.`,
+    `Quit Orca and open it again (it looks for agents at startup). Then pick ${label} under Agent when you create a`,
+    `workspace. It keeps ${label}'s name and icon, and Orca's status dot won't follow the harness.`,
   );
   return out.join("\n");
 }
