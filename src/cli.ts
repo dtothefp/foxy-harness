@@ -7,6 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { runAcp } from "./acp.ts";
 import { addModelExports } from "./envrc.ts";
 import { setupAoe } from "./aoe.ts";
+import { setupOrca } from "./orca.ts";
 import { login } from "./auth/codex-oauth.ts";
 import { chooseProvider, type Frontend, startSession } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
@@ -317,6 +318,16 @@ if (args[0] === "aoe") {
   }
   try {
     console.log(await setupAoe({ mode, check: args.includes("--check") }));
+    process.exit(0);
+  } catch (err) {
+    console.error(red((err as Error).message));
+    process.exit(1);
+  }
+}
+// `foxy-harness orca [--as <agent>] [--check] [--remove]` lists the harness in Orca's agent picker.
+if (args[0] === "orca") {
+  try {
+    console.log(await setupOrca({ agent: option("--as"), check: flag("--check"), remove: flag("--remove") }));
     process.exit(0);
   } catch (err) {
     console.error(red((err as Error).message));
