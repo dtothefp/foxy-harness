@@ -160,7 +160,7 @@ export function createInlineTui(view: () => InputView, out: NodeJS.WriteStream =
     },
     page: () => 0,
     // A new prompt starts on its own line. The terminal scrolls it into view.
-    toTop() {
+    newPrompt() {
       if (active && partial) out.write("\n");
     },
     busy(text: string) {

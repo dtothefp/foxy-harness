@@ -62,8 +62,6 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
   let rows: string[] = [];
   let counts: number[] = [];
   let wrappedAt = 0;
-  // The line of the latest prompt. It's kept at the top of the screen until the reply fills it.
-  let anchor = -1;
   // Rows scrolled back from the bottom. 0 follows new output.
   let scroll = 0;
   let lastTop = 0;
@@ -106,13 +104,12 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
         0,
         counts.splice(0, drop).reduce((a, b) => a + b, 0),
       );
-      anchor -= drop;
       clearSelection();
     }
   }
 
   // All rows at the current width, with the line still being written at the end.
-  function allRows(): { rows: string[]; anchorRow: number } {
+  function allRows(): string[] {
     if (wrappedAt !== width()) {
       wrappedAt = width();
       clearSelection();
@@ -125,8 +122,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
       }
     }
     const last = lines[lines.length - 1]!;
-    const anchorRow = anchor < 0 ? -1 : counts.slice(0, anchor).reduce((a, b) => a + b, 0);
-    return { rows: last ? [...rows, ...wrap(last, wrappedAt)] : rows, anchorRow };
+    return last ? [...rows, ...wrap(last, wrappedAt)] : rows;
   }
 
   function status(): string {
@@ -147,9 +143,9 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
     if (!active) return;
     const bottom = panel();
     const size = Math.max(1, height() - bottom.length);
-    const { rows: all, anchorRow } = allRows();
-    // Following, the latest prompt stays at the top until its reply fills the screen.
-    const follow = Math.max(0, all.length - size, anchorRow);
+    const all = allRows();
+    // Following, output fills down from the top and scrolls once it reaches the panel.
+    const follow = Math.max(0, all.length - size);
     // Scrolled back, new output doesn't move what you're reading.
     if (scroll) scroll += follow - lastTop;
     scroll = Math.max(0, Math.min(scroll, follow));
@@ -223,7 +219,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
   function selectedText(): string {
     const sel = ordered();
     if (!sel) return "";
-    const { rows: all } = allRows();
+    const all = allRows();
     // Which rows start a line, so wrapped ones join without a newline.
     const starts = new Set<number>();
     let n = 0;
@@ -257,7 +253,7 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
     if (button === 65) return tui.scroll(-3);
     // Clicks on the panel aren't for the transcript.
     const inView = e.y <= viewSize;
-    const { rows: all } = allRows();
+    const all = allRows();
     const top = lastTop - scroll;
     const cell = { row: top + Math.min(e.y, viewSize) - 1, col: e.x - 1 };
     if (button === 0 && !e.release) {
@@ -321,11 +317,10 @@ export function createTui(view: () => InputView, out: NodeJS.WriteStream = proce
       draw();
     },
     page: () => Math.max(1, height() - panelSize() - 2),
-    // A new prompt starts at the top of the screen.
-    toTop() {
+    // A new prompt goes under the last output, on its own line, and the view follows it.
+    newPrompt() {
       if (!active) return;
       if (lines[lines.length - 1]) out.write("\n");
-      anchor = lines.length - 1;
       scroll = 0;
     },
     busy(text: string) {

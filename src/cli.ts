@@ -32,7 +32,8 @@ import {
 import { listModels } from "./providers/codex.ts";
 import type { Usage } from "./providers/types.ts";
 import { type Command, commands, expandSkill, matchCommands } from "./commands.ts";
-import { keyInput, onKeys, onMouse } from "./keys.ts";
+import { keyInput, onKeys, onMouse, onPaste } from "./keys.ts";
+import { createPastes } from "./paste.ts";
 import { markdownStream } from "./markdown.ts";
 import { createInlineTui } from "./inline.ts";
 import { createTui } from "./tui.ts";
@@ -644,6 +645,16 @@ if (process.stdin.isTTY) {
   });
 }
 
+// Big pastes and dragged-in images show as placeholders like [Pasted text #1 +42 lines] while typing. The
+// pasted text goes back in when the prompt is sent.
+const pastes = createPastes();
+onPaste((text) => pastes.label(text));
+const sent = (text: string) => {
+  const full = pastes.expand(text);
+  pastes.clear();
+  return full;
+};
+
 // Waiting for the next prompt, when idle.
 let waiter: ((prompt: string) => void) | undefined;
 
@@ -661,7 +672,7 @@ rl.on("line", (line) => {
   if (!current) {
     // Enter before the prompt is ready keeps the text in the input.
     if (!waiter) return void rl.write(text.replace(/\n/g, " "));
-    waiter(text);
+    waiter(sent(text));
     waiter = undefined;
     return;
   }
@@ -672,7 +683,8 @@ rl.on("line", (line) => {
     return console.log(dim("⏺ Commands and ! shell commands wait for the turn to finish. esc stops it."));
   }
   console.log(dim("⏺ Steering, it goes in at the next step"));
-  void attachmentsInPrompt(text, cwd).then(({ attachments }) => agent.steer(text, attachments.length ? attachments : undefined));
+  const steer = sent(text);
+  void attachmentsInPrompt(steer, cwd).then(({ attachments }) => agent.steer(steer, attachments.length ? attachments : undefined));
 });
 
 function readPrompt(): Promise<string> {
@@ -687,10 +699,10 @@ function readPrompt(): Promise<string> {
   });
 }
 
-// The prompt as sent, at the top of the screen with its reply below.
+// The prompt as sent, under the last output with its reply below.
 function showPrompt(prompt: string) {
   if (!screen.muted) return;
-  tui.toTop();
+  tui.newPrompt();
   const [first, ...rest] = prompt.split("\n");
   console.log(`${cyan("›")} ${first}${rest.map((l) => `\n  ${l}`).join("")}\n`);
 }
