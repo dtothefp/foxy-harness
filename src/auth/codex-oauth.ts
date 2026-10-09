@@ -20,6 +20,8 @@ const OLD_HOME = join(homedir(), ".fox-harness");
 if (!process.env.HARNESS_HOME && !existsSync(HARNESS_HOME) && existsSync(OLD_HOME)) renameSync(OLD_HOME, HARNESS_HOME);
 const AUTH_FILE = join(HARNESS_HOME, "auth.json");
 
+export const hasLogin = () => existsSync(AUTH_FILE);
+
 type TokenResponse = { id_token?: string; access_token: string; refresh_token?: string };
 type AuthFile = {
   auth_mode: "chatgpt";

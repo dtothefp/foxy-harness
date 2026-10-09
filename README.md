@@ -14,6 +14,8 @@ For Claude, see Configuration below. Claude subscription login isn't allowed in 
 
 Tokens are stored in `~/.foxy-harness/auth.json` (mode 600). It's our own file, not Codex's, because refresh tokens rotate and sharing one would log Codex out.
 
+Codex also runs on an API key, for machines where Codex CLI is set up that way. With no ChatGPT login, the harness uses `OPENAI_API_KEY`, or the key `codex login --with-api-key` saved in `~/.codex/auth.json`, against `OPENAI_BASE_URL` (default the OpenAI API). If Codex CLI's `~/.codex/config.toml` picks a custom `model_provider` (a company gateway, Azure), the harness uses that block as is. `base_url`, `env_key`, `query_params`, `http_headers` and `env_http_headers` all apply, and Codex's `model` becomes the default. Only `wire_api = "responses"` works. Then `foxy-harness --provider codex` (or `HARNESS_PROVIDER=codex`) runs on it.
+
 ## Use
 
 ```bash
@@ -30,7 +32,7 @@ Left arrow on an empty prompt lists every saved session, from any directory, new
 
 Session managers like Agent of Empires, Orca and Paseo drive Claude Code and Codex through these same flags. Point one at `foxy-harness --continue` and relaunching a pane picks up where it left off. The terminal title also follows Claude Code's. `⠋ foxy-harness` while working, `✋` while a permission question waits, `✳` when idle. Tools that read pane titles use that to show which agents need you.
 
-`/model <name>` switches models mid-session within the same provider (`/model gpt-5.4`, `/model opus`). `/model` alone shows the current one. `foxy-harness models` lists what your ChatGPT plan can use.
+`/model <name>` switches models mid-session within the same provider (`/model gpt-5.4`, `/model opus`). `/model` alone shows the current one. `foxy-harness models` lists what your ChatGPT plan or API key can use.
 
 Name your own models with `HARNESS_MODEL_<NAME>` env vars, in your shell or a settings.json `env` block. It's handy for Bedrock ARNs.
 
@@ -130,6 +132,7 @@ Values are read, never exported, so bash commands the agent runs don't see your 
 | `AWS_BEARER_TOKEN_BEDROCK` or `ANTHROPIC_AUTH_TOKEN` | Sent as `Authorization: Bearer`.                                                                                                                                                                                |
 | `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`                    | Gateway handles AWS auth, send no AWS credentials.                                                                                                                                                              |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`            | Direct Anthropic API.                                                                                                                                                                                           |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `CODEX_HOME`    | Codex on an API key instead of the ChatGPT login. `CODEX_HOME` is where Codex CLI's config.toml and auth.json are (default `~/.codex`).                                                                         |
 | `ANTHROPIC_CUSTOM_HEADERS`                           | Extra headers, one `Name: value` per line.                                                                                                                                                                      |
 
 Without `--provider`, the harness picks Bedrock if `CLAUDE_CODE_USE_BEDROCK=1`, the Anthropic API if `--model` names a Claude model, else Codex.
@@ -199,7 +202,7 @@ Skills come from `.claude/skills`, `.agents/skills` and `.codex/skills`, in the 
 - `src/tools/read-file.ts` returns numbered lines, 2000 at a time, with offset/limit paging. Images and PDFs come back as attachments, office documents as text (`src/attachments.ts`).
 - `src/tools/web.ts` has `web_fetch` and the local `web_search`. A provider lists its server-side tools in `hostedTools`, the registry drops the local version of those, and the provider reports each server call through `onServerTool` so the frontends show it like any other tool.
 - `src/tools/bash.ts` runs each command in a fresh process group with a timeout. No persistent shell (the mini-swe-agent tradeoff).
-- `src/providers/` is a thin provider interface. `codex.ts` talks to the ChatGPT Codex backend, `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
+- `src/providers/` is a thin provider interface. `codex.ts` talks to the Responses API, on the ChatGPT Codex backend or with an API key (`openai-endpoint.ts` picks which), `claude.ts` sends one Messages request shape over two transports, the Anthropic API (SSE) and Bedrock `invoke-with-response-stream` (AWS eventstream, decoded in `eventstream.ts`). Config lives in `src/config.ts`.
 - `docs/codex-backend.md` has the OAuth and wire-format details.
 
 ## Auth policy
