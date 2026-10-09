@@ -5,6 +5,7 @@ import { loadInstructions, loadSkills, watchPackages } from "./context.ts";
 import { type HarnessEvent, type HookResult, Hooks } from "./events.ts";
 import { claudeProvider, resolveClaudeModel } from "./providers/claude.ts";
 import { codexProvider } from "./providers/codex.ts";
+import { resolveEndpoint } from "./providers/openai-endpoint.ts";
 import type { Provider, ToolSpec } from "./providers/types.ts";
 import { providerFamily, type Session } from "./sessions.ts";
 import { toolsFor } from "./tools/index.ts";
@@ -27,7 +28,7 @@ export type Frontend = Pick<
 export type ProviderChoice = { provider: string; model?: string };
 
 // codex | bedrock | anthropic. Without a flag: Bedrock if Claude Code is set up for it, the Anthropic API
-// if a Claude model was asked for, else Codex over the ChatGPT login. A resumed session keeps its
+// if a Claude model was asked for, else Codex (ChatGPT login or API key, see openai-endpoint.ts). A resumed session keeps its
 // provider and model unless flags say otherwise. Throws when the flags ask for a provider the history
 // can't move to.
 export function chooseProvider(config: Config, flags: { provider?: string; model?: string }, resumed?: Session): ProviderChoice {
@@ -60,7 +61,10 @@ export function expandModel<T extends string | undefined>(config: Config, name: 
 export function makeProvider(config: Config, choice: ProviderChoice, sessionId: string): Provider {
   const { provider } = choice;
   const model = expandModel(config, choice.model);
-  if (provider === "codex") return codexProvider(model ?? "gpt-5.5", sessionId, config.get("HARNESS_EFFORT"));
+  if (provider === "codex") {
+    const endpoint = resolveEndpoint(config);
+    return codexProvider(endpoint, model ?? endpoint.model ?? "gpt-5.5", sessionId, config.get("HARNESS_EFFORT"));
+  }
   if (provider !== "bedrock" && provider !== "anthropic") {
     throw new Error(`Unknown provider "${provider}". Use codex, bedrock or anthropic.`);
   }

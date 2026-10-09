@@ -1,6 +1,6 @@
-import { getAuth, ORIGINATOR } from "../auth/codex-oauth.ts";
 import { webSearchTool } from "../tools/web.ts";
 import { backoff, dropped, watchShown } from "./net.ts";
+import type { Endpoint } from "./openai-endpoint.ts";
 import { sseEvents } from "./sse.ts";
 import {
   type Completion,
@@ -14,19 +14,19 @@ import {
   type ToolCall,
 } from "./types.ts";
 
-// ChatGPT-subscription Codex backend (Responses API over SSE). See docs/codex-backend.md.
-const BASE = "https://chatgpt.com/backend-api/codex";
+// Codex over the Responses API (SSE), on the ChatGPT backend or with an API key. See docs/codex-backend.md
+// and openai-endpoint.ts.
 const CONTEXT_WINDOW = 272_000;
 const RETRIES = 3;
 
 // effort is HARNESS_EFFORT (minimal, low, medium, high, xhigh). Codex CLI's default is medium.
-export function codexProvider(model: string, sessionId: string, effort = "medium"): Provider {
+export function codexProvider(endpoint: Endpoint, model: string, sessionId: string, effort = "medium"): Provider {
   async function request(req: CompletionRequest, extra: unknown[] = []): Promise<Completion> {
     for (let attempt = 0; ; attempt++) {
       const watched = watchShown(req);
       try {
-        let res = await send(req, model, sessionId, effort, false, extra);
-        if (res.status === 401) res = await send(req, model, sessionId, effort, true, extra);
+        let res = await send(endpoint, req, model, sessionId, effort, false, extra);
+        if (res.status === 401 && endpoint.chatgpt) res = await send(endpoint, req, model, sessionId, effort, true, extra);
         if (!res.ok) throw new Error(`codex ${res.status}: ${await res.text()}`);
         return await readStream(res, watched.req);
       } catch (err) {
@@ -54,16 +54,20 @@ export function codexProvider(model: string, sessionId: string, effort = "medium
   };
 }
 
-async function send(req: CompletionRequest, model: string, sessionId: string, effort: string, forceRefresh: boolean, extra: unknown[]) {
-  const auth = await getAuth({ forceRefresh });
-  return fetch(`${BASE}/responses`, {
+async function send(
+  endpoint: Endpoint,
+  req: CompletionRequest,
+  model: string,
+  sessionId: string,
+  effort: string,
+  forceRefresh: boolean,
+  extra: unknown[],
+) {
+  return fetch(endpoint.url("/responses"), {
     method: "POST",
     signal: req.signal,
     headers: {
-      Authorization: `Bearer ${auth.accessToken}`,
-      "chatgpt-account-id": auth.accountId,
-      "OpenAI-Beta": "responses=experimental",
-      originator: ORIGINATOR,
+      ...(await endpoint.headers(forceRefresh)),
       "session-id": sessionId,
       "x-client-request-id": crypto.randomUUID(),
       accept: "text/event-stream",
@@ -200,15 +204,16 @@ function parseCall(item: { call_id: string; name: string; arguments: string }): 
   return { id: item.call_id, name: item.name, input };
 }
 
-export async function listModels(): Promise<unknown> {
-  const auth = await getAuth();
-  const res = await fetch(`${BASE}/models?client_version=0.200.0`, {
-    headers: {
-      Authorization: `Bearer ${auth.accessToken}`,
-      "chatgpt-account-id": auth.accountId,
-      originator: ORIGINATOR,
-    },
+// The models this login or key can use, as { slug, description }.
+export async function listModels(endpoint: Endpoint): Promise<{ slug: string; description?: string }[]> {
+  const res = await fetch(endpoint.url(endpoint.chatgpt ? "/models?client_version=0.200.0" : "/models"), {
+    headers: await endpoint.headers(),
   });
   if (!res.ok) throw new Error(`models ${res.status}: ${await res.text()}`);
-  return res.json();
+  const json = (await res.json()) as {
+    models?: { slug: string; description?: string; visibility?: string }[];
+    data?: { id: string }[];
+  };
+  if (json.models) return json.models.filter((m) => m.visibility !== "hide");
+  return (json.data ?? []).map((m) => ({ slug: m.id })).sort((a, b) => a.slug.localeCompare(b.slug));
 }

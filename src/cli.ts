@@ -30,6 +30,7 @@ import {
   sessionTitle,
 } from "./sessions.ts";
 import { listModels } from "./providers/codex.ts";
+import { resolveEndpoint } from "./providers/openai-endpoint.ts";
 import type { Usage } from "./providers/types.ts";
 import { type Command, commands, expandSkill, matchCommands } from "./commands.ts";
 import { keyInput, onKeys, onMouse, onPaste } from "./keys.ts";
@@ -342,8 +343,8 @@ if (args[0] === "envrc") {
   process.exit(0);
 }
 if (args[0] === "models") {
-  const { models } = (await listModels()) as { models: { slug: string; description?: string; visibility?: string }[] };
-  for (const m of models.filter((m) => m.visibility !== "hide")) console.log(`${m.slug.padEnd(24)} ${dim(m.description ?? "")}`);
+  const models = await listModels(resolveEndpoint(config));
+  for (const m of models) console.log(`${m.slug.padEnd(24)} ${dim(m.description ?? "")}`);
   process.exit(0);
 }
 // `foxy-harness last [id-prefix]` summarizes the newest session file (or a given one).
